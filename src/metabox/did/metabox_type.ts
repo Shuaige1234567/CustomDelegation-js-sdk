@@ -1,6 +1,7 @@
 import type {Principal} from '@dfinity/principal';
 import type {ActorMethod} from '@dfinity/agent';
 
+export type AccountIdentifier = Uint8Array;
 export type BackUp = { 'One': Array<[Principal, Array<Principal>]> } |
   { 'Six': Array<[Principal, string]> } |
   { 'Two': Array<[Principal, bigint]> } |
@@ -8,6 +9,8 @@ export type BackUp = { 'One': Array<[Principal, Array<Principal>]> } |
   { 'Five': Array<[string, Principal]> } |
   { 'Four': Array<[Principal, Principal]> } |
   { 'Three': Array<[Principal, BoxState__1]> };
+export type BlockIndex = bigint;
+export type BlockIndex__1 = bigint;
 
 export interface BoxAllInfo {
   'status': BoxStatus,
@@ -107,16 +110,19 @@ export interface MetaBox {
   'changeBoxAvatarKey': ActorMethod<[string], undefined>,
   'clearLog': ActorMethod<[], undefined>,
   'createDataBoxControl': ActorMethod<[CreateBoxArgs, boolean, [] | [Principal]],
-    Result_5>,
-  'createDataBoxFee': ActorMethod<[CreateBoxArgs, boolean], Result_5>,
-  'createDataBoxFree': ActorMethod<[CreateBoxArgs], Result_5>,
-  'createProfile': ActorMethod<[Uint8Array], Result_5>,
-  'deleteBox': ActorMethod<[DelBoxArgs], Result_4>,
+    Result_6>,
+  'createDataBoxFee': ActorMethod<[CreateBoxArgs, boolean], Result_6>,
+  'createDataBoxFree': ActorMethod<[CreateBoxArgs], Result_6>,
+  'createDataBoxServer': ActorMethod<[CreateBoxArgs, Principal], Principal>,
+  'createProfile': ActorMethod<[Uint8Array], Result_6>,
+  'deleteBox': ActorMethod<[DelBoxArgs], Result_5>,
   'emitShareBox': ActorMethod<[Principal, Principal], Result>,
   'getAdmins': ActorMethod<[], Array<Principal>>,
+  'getAllPC': ActorMethod<[], Array<Principal>>,
   'getBackUp': ActorMethod<[bigint], BackUp>,
-  'getBoxState': ActorMethod<[Principal], Result_3>,
+  'getBoxState': ActorMethod<[Principal], Result_4>,
   'getBoxes': ActorMethod<[Principal], Array<BoxAllInfo>>,
+  'getControlWhitelist': ActorMethod<[], Array<Principal>>,
   'getCycleBalance': ActorMethod<[], bigint>,
   'getDataBoxVersion': ActorMethod<[], bigint>,
   'getIcp': ActorMethod<[], bigint>,
@@ -131,14 +137,14 @@ export interface MetaBox {
   'getSharedBoxes': ActorMethod<[], Array<BoxAllInfo>>,
   'getTotal': ActorMethod<[], [bigint, bigint]>,
   'getUserBalance': ActorMethod<[], [] | [bigint]>,
-  'initPreCreateDatabox': ActorMethod<[], Result_2>,
-  'initPreCreateProfile': ActorMethod<[], Result_2>,
+  'initPreCreateDatabox': ActorMethod<[], Result_3>,
+  'initPreCreateProfile': ActorMethod<[], Result_3>,
   'installCycleWasm': ActorMethod<[Uint8Array], Result>,
   'isNotFirstDataBox': ActorMethod<[], boolean>,
-  'preCreateDataBox': ActorMethod<[], Result_2>,
+  'preCreateDataBox': ActorMethod<[], Result_3>,
   'preCreateDataBoxOne': ActorMethod<[], Result>,
-  'preCreateProfile': ActorMethod<[], Result_2>,
-  'preCreateProfileOne': ActorMethod<[], Result_2>,
+  'preCreateProfile': ActorMethod<[], Result_3>,
+  'preCreateProfileOne': ActorMethod<[], Result_3>,
   'refreshBalance': ActorMethod<[Principal], undefined>,
   'removeShareBox': ActorMethod<[Principal, Principal], Result>,
   'removeSharedBox': ActorMethod<[Principal, Principal], Result>,
@@ -148,6 +154,7 @@ export interface MetaBox {
   'stopBox': ActorMethod<[BoxInfo__1], undefined>,
   'topUpBox': ActorMethod<[TopUpArgs], Result>,
   'transferDataboxOwner': ActorMethod<[Principal, Principal], Result>,
+  'transferOutICP': ActorMethod<[AccountIdentifier, bigint], Result_2>,
   'updateBoxInfo': ActorMethod<[BoxInfo__1], Result>,
   'updateDataBoxVersion': ActorMethod<[bigint], boolean>,
   'updateProfileVersion': ActorMethod<[bigint], boolean>,
@@ -161,21 +168,35 @@ export type Result = { 'ok': null } |
   { 'err': Error };
 export type Result_1 = { 'ok': string } |
   { 'err': string };
-export type Result_2 = { 'ok': Array<Principal> } |
+export type Result_2 = { 'ok': BlockIndex__1 } |
+  { 'err': TransferError };
+export type Result_3 = { 'ok': Array<Principal> } |
   { 'err': Error };
-export type Result_3 = { 'ok': BoxState } |
+export type Result_4 = { 'ok': BoxState } |
   { 'err': Error };
-export type Result_4 = { 'ok': string } |
+export type Result_5 = { 'ok': string } |
   { 'err': Error };
-export type Result_5 = { 'ok': Principal } |
+export type Result_6 = { 'ok': Principal } |
   { 'err': Error };
 export type RustResult = { 'Ok': bigint } |
   { 'Err': BurnError };
+
+export interface Token {
+  'e8s': bigint
+}
 
 export interface TopUpArgs {
   'box_id': Principal,
   'icp_amount': bigint
 }
+
+export type TransferError = {
+  'TxTooOld': { 'allowed_window_nanos': bigint }
+} |
+  { 'BadFee': { 'expected_fee': Token } } |
+  { 'TxDuplicate': { 'duplicate_of': BlockIndex } } |
+  { 'TxCreatedInFuture': null } |
+  { 'InsufficientFunds': { 'balance': Token } };
 
 export interface UpdateWasmArgs {
   'wasm': Uint8Array,

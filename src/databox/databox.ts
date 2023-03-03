@@ -1,13 +1,14 @@
 import {idlFactory} from "./did/databox"
 import {Actor, ActorMethod, ActorSubclass, HttpAgent} from "@dfinity/agent";
 import {
+  AssetExt,
   FileExt,
   FileLocation,
-  FilePut,
   Result_1,
   Result_10,
   Result_2,
-  Result_3, Result_5,
+  Result_3,
+  Result_5,
   Result_7,
   Result_9
 } from "./did/databox_type";
@@ -16,11 +17,35 @@ import random from "string-random"
 import {Principal} from "@dfinity/principal";
 import {changePlainFilePermissionArg, shareFileArg} from "../types";
 import {AESEncryptApi, EncryptApi, RSAEncryptApi} from "../utils";
-import {MetaBox} from "../metabox";
+import {MetaBox, Wallet} from "../metabox";
+import {
+  uploadEncryptedArrayBuffer,
+  uploadEncryptedFile, uploadEncryptedText,
+  uploadPlainArrayBuffer,
+  uploadPlainFile,
+  uploadPlainText
+} from "./util";
 
 
-const chunkSize = 1992288
+export const chunkSize = 1992288
 const ONE_BYTE_UPLOAD_USE_CYCLES = 2260
+
+export type everPayToken = "BNB" | "AR" | "USDT" | "ETH"
+
+type fileType = {
+  Encrypted: {
+    publicKey: string
+  }
+} | "Plaintext"
+
+export type Chain = "icp" | {
+  arweave: {
+    token: everPayToken,
+    wallet: Wallet
+  }
+} | "ipfs" | "bnb"
+
+export type DataType = File | string | Blob | Uint8Array
 
 export class DataBox {
   private readonly agent: HttpAgent
@@ -31,56 +56,138 @@ export class DataBox {
     this.DataBoxActor = Actor.createActor(idlFactory, {agent, canisterId})
   }
 
-  public async boxState(): Promise<Result_10> {
+  private async _putFileToIC(props: {
+    dataArr: DataType[],
+    isPrivate: boolean,
+    fileType: fileType,
+    keyArr?: string[]
+  }): Promise<string[]> {
+    const {dataArr, isPrivate, fileType, keyArr} = props
     try {
-      return await this.DataBoxActor.canisterState() as Result_10
-    } catch (e) {
-      throw e
-    }
-  }
-
-  public async cycleBalance(): Promise<Result_7> {
-    try {
-      return await this.DataBoxActor.cycleBalance() as Result_7
-    } catch (e) {
-      throw e
-    }
-  }
-
-  public async put_plain_files(files: File[], is_private: boolean, key_arr?: string[]): Promise<string[]> {
-    try {
-      if (key_arr && key_arr.length !== files.length) throw new Error("文件数量与key数量不匹配")
       const Actor = this.DataBoxActor
       const allPromise: Array<Promise<any>> = []
-      const keyArr: string[] = []
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        const key = key_arr ? key_arr[i] : nanoid()
-        keyArr.push(key)
-        const total_size = file.size
-        const total_index = Math.ceil(total_size / chunkSize)
-        const allData = await DataBox.FileRead(file)
-        for (let i = 0; i < allData.length; i++) {
-          const arg: FilePut = {
-            PlainFilePut: {
-              IC: {
-                file_extension: file.type,
-                order: BigInt(i),
-                chunk_number: BigInt(total_index),
-                chunk: {data: allData[i]},
-                aes_pub_key: [],
-                file_name: file.name,
-                file_key: key,
-                total_size: BigInt(file.size),
-                is_private: is_private
-              }
-            }
-          }
-          allPromise.push(Actor.put(arg))
+      const _keyArr: string[] = []
+      for (let i = 0; i < dataArr.length; i++) {
+        const data = dataArr[i]
+        const key = keyArr ? keyArr[i] : nanoid()
+        _keyArr.push(key)
+        const args = {key, isPrivate, Actor, allPromise}
+        if (data instanceof File || data instanceof Blob) {
+          fileType === "Plaintext" ? await uploadPlainFile(data, args) : await uploadEncryptedFile(data, fileType.Encrypted.publicKey, args)
+        } else if (data instanceof Uint8Array) {
+          fileType === "Plaintext" ? await uploadPlainArrayBuffer(data, args) : await uploadEncryptedArrayBuffer(data, fileType.Encrypted.publicKey, args)
+        } else {
+          fileType === "Plaintext" ? await uploadPlainText(data, args) : await uploadEncryptedText(data, fileType.Encrypted.publicKey, args)
         }
       }
       await Promise.all(allPromise)
-      return keyArr
+      return _keyArr
+    } catch (e) {
+      throw e
+    }
+  }
+
+  private async _putPlainFilesToIC(props: {
+    dataArr: DataType[],
+    isPrivate: boolean,
+    keyArr?: string[]
+  }): Promise<string[]> {
+    try {
+      return await this._putFileToIC({...props, fileType: "Plaintext"})
+    } catch (e) {
+      throw e
+    }
+  }
+
+  private async _putEncryptFilesToIC(props: {
+    dataArr: DataType[],
+    publicKey: string,
+    keyArr?: string[]
+  }): Promise<string[]> {
+    const {publicKey} = props
+    try {
+      return await this._putFileToIC({
+        ...props, isPrivate: true, fileType: {
+          Encrypted: {
+            publicKey
+          }
+        }
+      })
+    } catch (e) {
+      throw e
+    }
+  }
+
+  private async _getICPlaintext(assetExt: AssetExt) {
+    try {
+      const dataArr: Array<Array<number>> = []
+      let fileSize = 0
+      const fileType = assetExt.file_extension
+      const res = await this._getData({PlainFileExt: assetExt}, false)
+      if (res[0] && res[0].ok) {
+        res.forEach(e => {
+          dataArr.push(e.ok)
+          fileSize += e.ok.length
+        })
+        const metadata = await DataBox.getFile(dataArr, fileSize)
+        if (fileType === "Uint8Array") return metadata
+        if (fileType === "text/plain") return new TextDecoder().decode(metadata)
+        return new Blob([metadata.buffer], {
+          type: fileType,
+        })
+      } else throw new Error(Object.keys(res[0].err)[0])
+    } catch (e) {
+      throw e
+    }
+  }
+
+  private async _getICEncrypted(assetExt: AssetExt, privateKey: string) {
+    try {
+      const dataArr: Array<Array<number>> = []
+      let fileSize = 0
+      const fileType = assetExt.file_extension
+      const res = await this._getData({EncryptFileExt: assetExt}, true)
+      if (res[0] && res[0].ok) {
+        res.forEach(e => {
+          e.ok.forEach(value => {
+            dataArr.push(value)
+            fileSize += value.length
+          })
+        })
+        const metadata = await DataBox.getFile(dataArr, fileSize)
+        const importedPrivateKey = await RSAEncryptApi.importPrivateKey(privateKey);
+        const preFileAesKey = await RSAEncryptApi.decryptMessage(
+          importedPrivateKey,
+          assetExt.aes_pub_key[0]
+        );
+        const AesKey = preFileAesKey.slice(0, 256);
+        const AesIv = preFileAesKey.slice(256);
+        const plainText = AESEncryptApi.AESDecData(metadata, AesKey, AesIv);
+        if (fileType === "Uint8Array") return plainText
+        if (fileType === "text/plain") return new TextDecoder().decode(plainText)
+        return new Blob([plainText.buffer], {
+          type: fileType,
+        })
+      } else throw new Error(Object.keys(res[0].err)[0])
+    } catch (e) {
+      throw e
+    }
+  }
+
+  private async _getData(file_info: FileExt, isEncrypt: boolean): Promise<Array<any>> {
+    try {
+      const queryPromiseArr: Array<Promise<any>> = []
+      const AssetExt = file_info[isEncrypt ? "EncryptFileExt" : "PlainFileExt"]
+      if (AssetExt) {
+        const need_query_times = Number(AssetExt.need_query_times)
+        for (let i = 0; i < need_query_times; i++) {
+          queryPromiseArr.push(this.DataBoxActor[isEncrypt ? "getCipher" : "getPlain"]({
+            file_key: AssetExt.file_key,
+            flag: BigInt(i)
+          }))
+        }
+        return await Promise.all(queryPromiseArr)
+      } else throw new Error(`this is not a ${isEncrypt ? "encrypt" : "plain"} file`)
     } catch (e) {
       throw e
     }
@@ -134,51 +241,6 @@ export class DataBox {
     }
   }
 
-  public async put_encrypt_files(files: File[], is_private: boolean, publicKey: string, key_arr?: string[]): Promise<string[]> {
-    try {
-      if (key_arr && key_arr.length !== files.length) throw new Error("文件数量与key数量不匹配")
-      const Actor = this.DataBoxActor
-      const keyArr: Array<string> = []
-      const allPromise: Array<any> = []
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        const key = key_arr ? key_arr[i] : nanoid()
-        keyArr.push(key)
-        const total_size = file.size
-        const allData = await DataBox.FileRead(file)
-        const data = new Uint8Array(total_size)
-        for (let i = 0; i < allData.length; i++) {
-          data.set(allData[i], i * chunkSize)
-        }
-        const {encData, encryptedAesKey} = await DataBox.encryptFileData(data, publicKey)
-        const NewBlob = new Blob([encData])
-        const encryptedData = await DataBox.FileRead(NewBlob)
-        for (let i = 0; i < encryptedData.length; i++) {
-          const arg: FilePut = {
-            EncryptFilePut: {
-              IC: {
-                file_extension: file.type,
-                order: BigInt(i),
-                chunk_number: BigInt(Math.ceil(NewBlob.size / chunkSize)),
-                chunk: {data: encryptedData[i]},
-                aes_pub_key: [encryptedAesKey],
-                file_name: file.name,
-                file_key: key,
-                total_size: BigInt(NewBlob.size),
-                is_private: is_private
-              }
-            }
-          }
-          allPromise.push(Actor.put(arg))
-        }
-      }
-      await Promise.all(allPromise)
-      return keyArr
-    } catch (e) {
-      throw e
-    }
-  }
-
   static async getFile(decodeArr: any, length: number): Promise<Uint8Array> {
     const File = new Uint8Array(length)
     for (let i = 0; i < decodeArr.length; i++) {
@@ -192,99 +254,109 @@ export class DataBox {
     return File
   }
 
-  private async getData(file_info: any, isEncrypt: boolean): Promise<Array<any>> {
+  public async boxState(): Promise<Result_10> {
     try {
-      const queryPromiseArr: Array<Promise<any>> = []
-      if (file_info.ok) {
-        const AssetExt = file_info.ok[isEncrypt ? "EncryptFileExt" : "PlainFileExt"]
-        if (AssetExt) {
-          const need_query_times = Number(AssetExt.need_query_times)
-          for (let i = 0; i < need_query_times; i++) {
-            queryPromiseArr.push(this.DataBoxActor[isEncrypt ? "getCipher" : "getPlain"]({
-              file_key: AssetExt.file_key,
-              flag: BigInt(i)
-            }))
-          }
-          return await Promise.all(queryPromiseArr)
-        } else throw new Error(`this is not a ${isEncrypt ? "encrypt" : "plain"} file`)
+      return await this.DataBoxActor.canisterState() as Result_10
+    } catch (e) {
+      throw e
+    }
+  }
+
+  public async cycleBalance(): Promise<Result_7> {
+    try {
+      return await this.DataBoxActor.cycleBalance() as Result_7
+    } catch (e) {
+      throw e
+    }
+  }
+
+  public putPlaintext(props: {
+    dataArr: DataType[],
+    isPrivate: boolean,
+    chain: Chain,
+    keyArr?: string[]
+  }) {
+    const {keyArr, chain, dataArr} = props
+    return new Promise<string[]>(async (resolve, reject) => {
+      if (keyArr && keyArr.length !== dataArr.length) return reject("文件数量与key数量不匹配")
+      if (chain !== "icp") return reject("coming soon")
+      try {
+        const res = await this._putPlainFilesToIC({...props})
+        return resolve(res)
+      } catch (e) {
+        reject(e)
+      }
+    })
+  }
+
+  public putEncrypted(props: {
+    dataArr: DataType[],
+    chain: Chain,
+    publicKey: string,
+    keyArr?: string[]
+  }) {
+    const {keyArr, chain, dataArr} = props
+    return new Promise<string[]>(async (resolve, reject) => {
+      if (keyArr && keyArr.length !== dataArr.length) return reject("文件数量与key数量不匹配")
+      if (chain !== "icp") return reject("coming soon")
+      try {
+        const res = await this._putEncryptFilesToIC({...props})
+        return resolve(res)
+      } catch (e) {
+        reject(e)
+      }
+    })
+  }
+
+
+  public async getPlaintext(fileKey: string): Promise<Blob | string | Uint8Array> {
+    try {
+      const file_info = await this.getFileInfo(fileKey)
+      if ("ok" in file_info) {
+        if ("PlainFileExt" in file_info.ok) {
+          const location = file_info.ok.PlainFileExt.page_field
+          if ("Arweave" in location || "IPFS" in location) throw new Error("coming soon")
+          return await this._getICPlaintext(file_info.ok.PlainFileExt)
+        } else throw new Error("this is not a plain file")
       } else throw new Error(Object.keys(file_info.err)[0])
     } catch (e) {
       throw e
     }
   }
 
-  public async get_plain_file(file_key: string): Promise<Blob> {
+  public async getEncryptedFile(fileKey: string, privateKey: string): Promise<Blob | string | Uint8Array> {
     try {
-      const dataArr: Array<Array<number>> = []
-      let fileSize = 0
-      const file_info = await this.get_file_info(file_key) as any
-      const fileType = file_info.ok.PlainFileExt.file_extension
-      const res = await this.getData(file_info, false)
-      if (res[0] && res[0].ok) {
-        res.forEach(e => {
-          dataArr.push(e.ok)
-          fileSize += e.ok.length
-        })
-        const metadata = await DataBox.getFile(dataArr, fileSize)
-        return new Blob([metadata.buffer], {
-          type: fileType,
-        })
-      } else throw new Error(Object.keys(res[0].err)[0])
+
+      const file_info = await this.getFileInfo(fileKey)
+      if ("ok" in file_info) {
+        if ("EncryptFileExt" in file_info.ok) {
+          const location = file_info.ok.EncryptFileExt.page_field
+          if ("Arweave" in location || "IPFS" in location) throw new Error("coming soon")
+          return await this._getICEncrypted(file_info.ok.EncryptFileExt, privateKey)
+        } else throw new Error("this is not a encrypted file")
+      } else throw new Error(Object.keys(file_info.err)[0])
     } catch (e) {
       throw e
     }
   }
 
-  public async get_encrypt_file(file_key: string, privatekey: string): Promise<Blob> {
+  public async deletePlaintext(fileKey: string): Promise<Result_1> {
     try {
-      const dataArr: Array<Array<number>> = []
-      let fileSize = 0
-      const file_info = await this.get_file_info(file_key) as any
-      const fileType = file_info?.ok?.EncryptFileExt.file_extension
-      const res = await this.getData(file_info, true)
-      if (res[0] && res[0].ok) {
-        res.forEach(e => {
-          e.ok.forEach(value => {
-            dataArr.push(value)
-            fileSize += value.length
-          })
-        })
-        const metadata = await DataBox.getFile(dataArr, fileSize)
-        const privateKey = await RSAEncryptApi.importPrivateKey(privatekey);
-        const preFileAesKey = await RSAEncryptApi.decryptMessage(
-          privateKey,
-          file_info.ok.EncryptFileExt.aes_pub_key[0]
-        );
-        const AesKey = preFileAesKey.slice(0, 256);
-        const AesIv = preFileAesKey.slice(256);
-        const plainText = AESEncryptApi.AESDecData(metadata, AesKey, AesIv);
-        return new Blob([plainText.buffer], {
-          type: fileType,
-        })
-      } else throw new Error(Object.keys(res[0].err)[0])
-
+      return await this.DataBoxActor.deleteFileFromKey(fileKey, {'Plain': null}) as Result_1
     } catch (e) {
       throw e
     }
   }
 
-  public async delete_box_plain_file(file_key: string): Promise<Result_1> {
+  public async deleteEncryptedFile(fileKey: string): Promise<Result_1> {
     try {
-      return await this.DataBoxActor.deleteFileFromKey(file_key, {'Plain': null}) as Result_1
+      return await this.DataBoxActor.deleteFileFromKey(fileKey, {'EnCrypt': null}) as Result_1
     } catch (e) {
       throw e
     }
   }
 
-  public async delete_box_encrypted_file(file_key: string): Promise<Result_1> {
-    try {
-      return await this.DataBoxActor.deleteFileFromKey(file_key, {'EnCrypt': null}) as Result_1
-    } catch (e) {
-      throw e
-    }
-  }
-
-  public async clear_box(): Promise<Result_1> {
+  public async clearBox(): Promise<Result_1> {
     try {
       return await this.DataBoxActor.clearall() as Result_1
     } catch (e) {
@@ -292,15 +364,15 @@ export class DataBox {
     }
   }
 
-  public async get_file_info(file_key: string): Promise<Result_2> {
+  public async getFileInfo(fileKey: string): Promise<Result_2> {
     try {
-      return await this.DataBoxActor.getAssetextkey(file_key) as Result_2
+      return await this.DataBoxActor.getAssetextkey(fileKey) as Result_2
     } catch (e) {
       throw e
     }
   }
 
-  public async getVersion(): Promise<bigint> {
+  public async getBoxVersion(): Promise<bigint> {
     try {
       return await this.DataBoxActor.getVersion() as bigint
     } catch (e) {
@@ -308,7 +380,7 @@ export class DataBox {
     }
   }
 
-  public async get_all_files_info(): Promise<Result_9> {
+  public async getAllFilesInfo(): Promise<Result_9> {
     try {
       return await this.DataBoxActor.getAssetexts() as Result_9
     } catch (e) {
@@ -324,7 +396,7 @@ export class DataBox {
     }
   }
 
-  public async get_owner(): Promise<Principal> {
+  public async getOwner(): Promise<Principal> {
     try {
       return await this.DataBoxActor.getOwner() as Principal
     } catch (e) {
@@ -364,32 +436,49 @@ export class DataBox {
     }
   }
 
-  public async is_need_upgrade(): Promise<boolean> {
+  public async isNeedUpgrade(): Promise<boolean> {
     try {
       const MBapi = new MetaBox(this.agent)
-      const version = Number(await this.getVersion())
-      const new_version = Number(await MBapi.getDataBoxVersion())
+      const version = Number(await this.getBoxVersion())
+      const new_version = Number(await MBapi.getBoxLatestVersion())
       return version < new_version
     } catch (e) {
       throw e
     }
   }
 
-  public async is_enough_to_upload(total_size: number): Promise<boolean> {
+  public async isEnoughToUpload(totalSize: number): Promise<boolean> {
     return new Promise<boolean>(async (resolve, reject) => {
       try {
         const res = await this.cycleBalance()
-        if (Object.keys(res)[0] === "ok") {//@ts-ignore
+        if ("ok" in res) {
           const balance = Number(res.ok)
-          if (total_size * ONE_BYTE_UPLOAD_USE_CYCLES < balance) {
+          if (totalSize * ONE_BYTE_UPLOAD_USE_CYCLES < balance) {
             return resolve(true)
-          } else return reject(Number(total_size * ONE_BYTE_UPLOAD_USE_CYCLES - balance))
-          //@ts-ignore
+          } else return reject(Number(totalSize * ONE_BYTE_UPLOAD_USE_CYCLES - balance))
         } else return reject(String(Object.keys(res.err)[0]))
       } catch (e) {
         return reject(e)
       }
     })
+  }
+
+  async addCon(to: Principal): Promise<Result_1> {
+    try {
+      const Actor = this.DataBoxActor;
+      return await Actor.addCon(to) as Result_1
+    } catch (e) {
+      throw e
+    }
+  }
+
+  async deleteCon(to: Principal): Promise<Result_1> {
+    try {
+      const Actor = this.DataBoxActor;
+      return await Actor.deleteCon(to) as Result_1
+    } catch (e) {
+      throw e
+    }
   }
 
   /**
@@ -418,8 +507,8 @@ export class DataBox {
     return new Promise<FileExt[]>(async (resolve, reject) => {
       try {
         if (onePageFileNums > 5000) return reject("A page of data cannot exceed 5000")
-        const res = await this.DataBoxActor.getPageFiles(fileLocation, BigInt(onePageFileNums), BigInt(pageIndex)) as Result_5 as any
-        if (Object.keys(res)[0] === "ok") return resolve(res.ok)
+        const res = await this.DataBoxActor.getPageFiles(fileLocation, BigInt(onePageFileNums), BigInt(pageIndex)) as Result_5
+        if ("ok" in res) return resolve(res.ok)
         else return reject(Object.keys(res.err)[0])
       } catch (e) {
         throw e
