@@ -1,8 +1,8 @@
 import {idlFactory} from "./did/metabox"
 import {Actor, ActorMethod, ActorSubclass, HttpAgent} from "@dfinity/agent";
-import {Principal} from "@dfinity/principal";
+import {Principal as BoxID} from "@dfinity/principal";
 import {
-  BoxAllInfo,
+  BoxAllInfo, BoxInfo,
   BoxInfo__1,
   BoxMetadata,
   CreateBoxArgs,
@@ -14,7 +14,7 @@ import {
   UpgradeBoxArgs
 } from "./did/metabox_type";
 import {getEHTICPSymbol, getToAccountIdentifier, getTokenPrice} from "../utils";
-import {DataBox} from "../databox";
+import {Box, Identity} from "../databox";
 
 export const mb_cid = "zbzr7-xyaaa-aaaan-qadeq-cai"
 
@@ -37,82 +37,20 @@ export class MetaBox {
     this.MetaBoxActor = Actor.createActor(idlFactory, {agent, canisterId: this.metaBoxCai})
   }
 
-  private _createBoxByICP(arg: BoxMetadata) {
-    return new Promise<Principal>(async (resolve, reject) => {
-      try {
-        const Actor = this.MetaBoxActor;
-        const Arg: CreateBoxArgs = {
-          'metadata': arg
-        }
-        const res = await Actor.createDataBoxFee(Arg, true) as Result_6
-        if ("ok" in res) return resolve(res.ok)
-        else reject(`${Object.keys(res.err)[0]}`);
-      } catch (e) {
-        reject(e);
-      }
-    });
-  }
-
-  private _createBoxWithController(arg: BoxMetadata, controller?: Principal) {
-    return new Promise<Principal>(async (resolve, reject) => {
-      try {
-        const Actor = this.MetaBoxActor;
-        const arg_0: CreateBoxArgs = {
-          metadata: arg
-        }
-        const res = await Actor.createDataBoxControl(arg_0, true, controller ? [controller] : []) as Result_6
-        if ("ok" in res) return resolve(res.ok)
-        else reject(`${Object.keys(res.err)[0]}`);
-      } catch (e) {
-        throw e
-      }
-    })
-  }
-
-  private async _emitShareBox(box_id: Principal, to: Principal): Promise<Result> {
+  private async _isFirstCreateBox(): Promise<boolean> {
     try {
       const Actor = this.MetaBoxActor;
-      return await Actor.emitShareBox(box_id, to) as Result
-    } catch (e) {
-      throw  e
-    }
-  }
-
-  private async _topUpBoxByICP(TopUpArgs: TopUpArgs): Promise<Result> {
-    try {
-      return await this.MetaBoxActor.topUpBox(TopUpArgs) as Result
+      const res = await Actor.isNotFirstDataBox()
+      return !res
     } catch (e) {
       throw e
     }
   }
 
-  private async _cancelShareBox(box_id: Principal, to: Principal): Promise<Result> {
-    try {
-      const Actor = this.MetaBoxActor;
-      return await Actor.removeShareBox(box_id, to) as Result
-    } catch (e) {
-      throw  e
-    }
-  }
-
-  async isFirstCreateBox(): Promise<boolean> {
-    try {
-      const Actor = this.MetaBoxActor;
-      return !(await Actor.isNotFirstDataBox())
-    } catch (e) {
-      throw e
-    }
-  }
-
-  async getICAccountID() {
-    const principal = await this.agent.getPrincipal()
-    return getToAccountIdentifier(Principal.from(this.metaBoxCai), principal)
-  }
-
-  async createBoxForFree(
+  private _createBoxForFree(
     arg: BoxMetadata
   ) {
-    return new Promise<Principal>(async (resolve, reject) => {
+    return new Promise<BoxID>(async (resolve, reject) => {
       try {
         const Actor = this.MetaBoxActor;
         const Arg: CreateBoxArgs = {
@@ -127,12 +65,103 @@ export class MetaBox {
     });
   }
 
+  private _createBoxByICP(arg: BoxMetadata) {
+    return new Promise<BoxID>(async (resolve, reject) => {
+      try {
+        const Actor = this.MetaBoxActor;
+        const Arg: CreateBoxArgs = {
+          'metadata': arg
+        }
+        const res = await Actor.createDataBoxFee(Arg, true) as Result_6
+        if ("ok" in res) return resolve(res.ok)
+        else reject(`${Object.keys(res.err)[0]}`);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
 
-  async createBox(arg: BoxMetadata, props?: Props) {
-    return new Promise<Principal>(async (resolve, reject) => {
+  private _createBoxWithController(arg: BoxMetadata, controller?: Identity) {
+    return new Promise<BoxID>(async (resolve, reject) => {
+      try {
+        if (controller && !("ICP" in controller)) return reject("coming soon")
+        const Actor = this.MetaBoxActor;
+        const arg_0: CreateBoxArgs = {
+          metadata: arg
+        }
+        const res = await Actor.createDataBoxControl(arg_0, true, controller ? [controller.ICP] : []) as Result_6
+        if ("ok" in res) return resolve(res.ok)
+        else reject(`${Object.keys(res.err)[0]}`);
+      } catch (e) {
+        throw e
+      }
+    })
+  }
+
+  private async _emitShareBox(box_id: BoxID, to: Identity): Promise<Result> {
+    try {
+      if (!("ICP" in to)) throw new Error("coming soon")
+      const Actor = this.MetaBoxActor;
+      return await Actor.emitShareBox(box_id, to.ICP) as Result
+    } catch (e) {
+      throw  e
+    }
+  }
+
+  private async _transferBoxOwner(canister_id: BoxID, to: Identity): Promise<Result> {
+    try {
+      if (!("ICP" in to)) throw new Error("coming soon")
+      return await this.MetaBoxActor.transferDataboxOwner(canister_id, to.ICP) as Result
+    } catch (e) {
+      throw  e
+    }
+  }
+
+  private async _topUpBoxByICP(TopUpArgs: TopUpArgs): Promise<Result> {
+    try {
+      return await this.MetaBoxActor.topUpBox(TopUpArgs) as Result
+    } catch (e) {
+      throw e
+    }
+  }
+
+  private async _cancelShareBox(box_id: BoxID, who: Identity): Promise<Result> {
+    try {
+      if (!("ICP" in who)) throw new Error("coming soon")
+      const Actor = this.MetaBoxActor;
+      return await Actor.removeShareBox(box_id, who.ICP) as Result
+    } catch (e) {
+      throw  e
+    }
+  }
+
+
+  /**
+   * 获取用户在MetaBox里面的account ID
+   *
+   * @return {string} account ID
+   */
+  async getICAccountID() {
+    const principal = await this.agent.getPrincipal()
+    return getToAccountIdentifier(BoxID.from(this.metaBoxCai), principal)
+  }
+
+  /**
+   * 创建 Box
+   *
+   * @param {Omit<BoxMetadata, "box_type">} arg Box 信息
+   * @param {Props} props option 选择支付的代币
+   * @return {BoxID} Box ID
+   */
+  async createBox(arg: Omit<BoxMetadata, "box_type">, props?: Props): Promise<BoxID> {
+    return new Promise<BoxID>(async (resolve, reject) => {
       try {
         if (props) return reject("coming soon")
-        const res = await this._createBoxByICP(arg)
+        const isFirstCreateBox = await this._isFirstCreateBox()
+        const arg_1: BoxMetadata = {
+          ...arg, box_type: {'data_box': null}
+        }
+        const res = isFirstCreateBox ? await this._createBoxForFree(arg_1) : await this._createBoxByICP(arg_1)
         return resolve(res)
       } catch (e) {
         reject(e);
@@ -140,43 +169,69 @@ export class MetaBox {
     });
   }
 
+  /**
+   * 获取创建一个Box所需的费用
+   *
+   * @param {Token} token
+   *
+   * @return {number} 价格
+   */
   async getRequiredToken(token: Token): Promise<number> {
     try {
       const Actor = this.MetaBoxActor;
       const res = Number(await Actor.getIcp())
-      if (token === "icp") return res
-      if (token === "eth") return await getEHTICPSymbol(res)
+      const needICP = ((res / 1e8) + 0.01).toFixed(2)
+      const numberNeedIcp = Number(needICP)
+      if (token === "icp") return numberNeedIcp
+      if (token === "eth") return await getEHTICPSymbol(numberNeedIcp)
       const icpPrice = await getTokenPrice("ICP")
-      return icpPrice * res
+      return icpPrice * numberNeedIcp
     } catch (e) {
       throw e
     }
   }
 
-  public async getAllBoxes(principal: Principal): Promise<BoxAllInfo[]> {
+  /**
+   * 获取指定用户所有 Box列表
+   * @param { Identity } who 支持几种身份体系 目前实现ICP
+   * @return {BoxAllInfo[]} Box 信息列表
+   */
+  public async getAllBoxes(who: Identity): Promise<BoxAllInfo[]> {
     try {
-      return await this.MetaBoxActor.getBoxes(principal) as BoxAllInfo[]
+      if (!("ICP" in who)) throw new Error("coming soon")
+      return await this.MetaBoxActor.getBoxes(who.ICP) as BoxAllInfo[]
     } catch (e) {
       throw e
     }
   }
 
-  public async deleteBox(delBoxArgs: DelBoxArgs): Promise<Result_5> {
+  /**
+   * 删除 Box
+   * @param {Omit<DelBoxArgs, "box_type">} delBoxArgs Box 信息
+   * @return {Result_5}
+   *
+   * @example
+   *  deleteBox({
+   *   'cycleTo': [] , //删除之后Box的cycle回收,只能填自己另外的Box ID,不填默认转给MetaBox
+   *   'canisterId': Principal.from(canisterID),
+   * })
+   */
+  public async deleteBox(delBoxArgs: Omit<DelBoxArgs, "box_type">): Promise<Result_5> {
     try {
-      return await this.MetaBoxActor.deleteBox(delBoxArgs) as Result_5
+      const arg: DelBoxArgs = {
+        ...delBoxArgs, box_type: {data_box: null}
+      }
+      return await this.MetaBoxActor.deleteBox(arg) as Result_5
     } catch (e) {
       throw e
     }
   }
 
-  async transferBoxOwner(canister_id: Principal, to: Principal): Promise<Result> {
-    try {
-      return await this.MetaBoxActor.transferDataboxOwner(canister_id, to) as Result
-    } catch (e) {
-      throw  e
-    }
-  }
 
+  /**
+   * 启动Box
+   * @param {BoxInfo__1} boxInfo Box Info
+   */
   public async startBox(boxInfo: BoxInfo__1) {
     try {
       await this.MetaBoxActor.startBox(boxInfo)
@@ -186,7 +241,14 @@ export class MetaBox {
   }
 
 
-  async topUpBox(box_id: Principal, amount: number, props?: Props): Promise<Result> {
+  /**
+   * 给Box 充值
+   *
+   * @param {BoxID} box_id Box ID
+   * @param {number} amount 数额
+   * @param {Props} props option 代币
+   */
+  async topUpBox(box_id: BoxID, amount: number, props?: Props): Promise<Result> {
     if (props) throw new Error("coming soon")
     try {
       const arg: TopUpArgs = {
@@ -199,14 +261,27 @@ export class MetaBox {
     }
   }
 
-  async upgradeBox(UpgradeBoxArgs: UpgradeBoxArgs): Promise<Result> {
+  /**
+   * 升级 Box
+   * @param {Omit<BoxInfo, "status" | "box_type">} UpgradeBoxArgs Box Info
+   */
+  async upgradeBox(UpgradeBoxArgs: Omit<BoxInfo, "status" | "box_type">): Promise<Result> {
     try {
-      return await this.MetaBoxActor.upgradeBox(UpgradeBoxArgs) as Result
+      const arg: UpgradeBoxArgs = {
+        info: {
+          ...UpgradeBoxArgs, status: {'running': null}, box_type: {data_box: null}
+        }
+      }
+      return await this.MetaBoxActor.upgradeBox(arg) as Result
     } catch (e) {
       throw e
     }
   }
 
+  /**
+   * 获取Box最新的版本
+   * @return {number}
+   */
   async getBoxLatestVersion(): Promise<bigint> {
     try {
       return await this.MetaBoxActor.getDataBoxVersion() as bigint
@@ -215,6 +290,12 @@ export class MetaBox {
     }
   }
 
+  /**
+   * 修改Box Info
+   *
+   * @param {BoxInfo__1} BoxInfo__1 Box 最新的Info
+   *
+   */
   async updateBoxInfo(BoxInfo__1: BoxInfo__1): Promise<Result> {
     try {
       return await this.MetaBoxActor.updateBoxInfo(BoxInfo__1) as Result
@@ -224,11 +305,19 @@ export class MetaBox {
   }
 
 
-  createBoxWithController(arg: BoxMetadata, controller?: Principal, props?: Props) {
-    return new Promise<Principal>(async (resolve, reject) => {
+  /**
+   * 创建Box并指定Box controller
+   *
+   *
+   * @param  {Omit<BoxMetadata, "box_type">} arg Box Info
+   * @param {Identity} controller option 控制权给xxx
+   * @param {Props} props option 代币
+   */
+  createBoxWithController(arg: Omit<BoxMetadata, "box_type">, controller?: Identity, props?: Props) {
+    return new Promise<BoxID>(async (resolve, reject) => {
       try {
         if (props) return reject("coming soon")
-        const res = await this._createBoxWithController(arg, controller)
+        const res = await this._createBoxWithController({...arg, box_type: {data_box: null}}, controller)
         return resolve(res)
       } catch (e) {
         throw e
@@ -236,13 +325,20 @@ export class MetaBox {
     })
   }
 
-  async cancelShareBox(box_id: Principal, to: Principal) {
+  /**
+   * 取消分享Box
+   *
+   * @param {BoxID} box_id Box ID
+   * @param {Identity} who 取消分享给谁
+   */
+  async cancelShareBox(box_id: BoxID, who: Identity) {
     try {
-      const databoxApi = new DataBox(box_id.toString(), this.agent)
-      const res = await Promise.all([this._cancelShareBox(box_id, to), databoxApi.deleteCon(to)])
+      if (!("ICP" in who)) throw new Error("coming soon")
+      const databoxApi = new Box(box_id.toString(), this.agent)
+      const res = await Promise.all([this._cancelShareBox(box_id, who), databoxApi.deleteBoxController(who)])
       const [res_1, res_2] = res
       if ("ok" in res_1 && "ok" in res_2) return true
-      Promise.all([this._cancelShareBox(box_id, to), databoxApi.deleteCon(to)]).then()
+      Promise.all([this._cancelShareBox(box_id, who), databoxApi.deleteBoxController(who)]).then()
       if ("err" in res_1) throw new Error(Object.keys(res_1.err)[0])
       if ("err" in res_2) throw new Error(Object.keys(res_2.err)[0])
       return false
@@ -252,13 +348,21 @@ export class MetaBox {
   }
 
 
-  async shareBox(box_id: Principal, to: Principal) {
+  /**
+   *
+   * 分享Box
+   *
+   * @param {BoxID} box_id Box ID
+   * @param {Identity} to 给谁
+   */
+  async shareBox(box_id: BoxID, to: Identity) {
     try {
-      const databoxApi = new DataBox(box_id.toString(), this.agent)
-      const res = await Promise.all([this._emitShareBox(box_id, to), databoxApi.addCon(to)])
+      if (!("ICP" in to)) throw new Error("coming soon")
+      const databoxApi = new Box(box_id.toString(), this.agent)
+      const res = await Promise.all([this._emitShareBox(box_id, to), databoxApi.addBoxController(to)])
       const [res_1, res_2] = res
       if ("ok" in res_1 && "ok" in res_2) return true
-      Promise.all([this._cancelShareBox(box_id, to), databoxApi.deleteCon(to)]).then()
+      Promise.all([this._cancelShareBox(box_id, to), databoxApi.addBoxController(to)]).then()
       if ("err" in res_1) throw new Error(Object.keys(res_1.err)[0])
       if ("err" in res_2) throw new Error(Object.keys(res_2.err)[0])
       return false
@@ -267,10 +371,17 @@ export class MetaBox {
     }
   }
 
-  async transferBox(box_id: Principal, to: Principal) {
+  /**
+   * 转移Box
+   *
+   * @param {BoxID} box_id BoxID
+   * @param {Identity} to 给谁
+   */
+  async transferBox(box_id: BoxID, to: Identity) {
     try {
-      const databoxApi = new DataBox(box_id.toString(), this.agent)
-      const res = await Promise.all([this.transferBoxOwner(box_id, to), databoxApi.transferOwner(to)])
+      if (!("ICP" in to)) throw new Error("coming soon")
+      const databoxApi = new Box(box_id.toString(), this.agent)
+      const res = await Promise.all([this._transferBoxOwner(box_id, to), databoxApi.transferBoxOwner(to)])
       const [res_1, res_2] = res
       if ("ok" in res_1 && "ok" in res_2) return true
       if ("err" in res_1) throw new Error(Object.keys(res_1.err)[0])

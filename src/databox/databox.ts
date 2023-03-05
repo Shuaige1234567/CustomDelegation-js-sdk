@@ -13,10 +13,9 @@ import {
   Result_9
 } from "./did/databox_type";
 import {nanoid} from "nanoid";
-import random from "string-random"
-import {Principal} from "@dfinity/principal";
+import {Principal as BoxID} from "@dfinity/principal";
 import {changePlainFilePermissionArg, shareFileArg} from "../types";
-import {AESEncryptApi, EncryptApi, RSAEncryptApi} from "../utils";
+import {AESEncryptApi, getFile, RSAEncryptApi} from "../utils";
 import {MetaBox, Wallet} from "../metabox";
 import {
   uploadEncryptedArrayBuffer,
@@ -26,11 +25,10 @@ import {
   uploadPlainText
 } from "./util";
 
-
-export const chunkSize = 1992288
-const ONE_BYTE_UPLOAD_USE_CYCLES = 2260
-
+type UserID = BoxID
 export type everPayToken = "BNB" | "AR" | "USDT" | "ETH"
+
+export type Identity = { EVM: string } | { ICP: UserID } | { Other: string }
 
 type fileType = {
   Encrypted: {
@@ -47,51 +45,44 @@ export type Chain = "icp" | {
 
 export type DataType = File | string | Blob | Uint8Array
 
-export class DataBox {
+export class Box {
   private readonly agent: HttpAgent
   private readonly DataBoxActor: ActorSubclass<Record<string, ActorMethod<unknown[], unknown>>>
 
-  constructor(canisterId: string, agent: HttpAgent) {
+  constructor(boxId: string, agent: HttpAgent) {
     this.agent = agent
-    this.DataBoxActor = Actor.createActor(idlFactory, {agent, canisterId})
+    this.DataBoxActor = Actor.createActor(idlFactory, {agent, canisterId: boxId})
   }
 
   private async _putFileToIC(props: {
-    dataArr: DataType[],
+    data: DataType,
     isPrivate: boolean,
     fileType: fileType,
-    keyArr?: string[]
-  }): Promise<string[]> {
-    const {dataArr, isPrivate, fileType, keyArr} = props
+    fileKey?: string
+  }): Promise<string> {
+    const {data, isPrivate, fileType, fileKey} = props
     try {
       const Actor = this.DataBoxActor
-      const allPromise: Array<Promise<any>> = []
-      const _keyArr: string[] = []
-      for (let i = 0; i < dataArr.length; i++) {
-        const data = dataArr[i]
-        const key = keyArr ? keyArr[i] : nanoid()
-        _keyArr.push(key)
-        const args = {key, isPrivate, Actor, allPromise}
-        if (data instanceof File || data instanceof Blob) {
-          fileType === "Plaintext" ? await uploadPlainFile(data, args) : await uploadEncryptedFile(data, fileType.Encrypted.publicKey, args)
-        } else if (data instanceof Uint8Array) {
-          fileType === "Plaintext" ? await uploadPlainArrayBuffer(data, args) : await uploadEncryptedArrayBuffer(data, fileType.Encrypted.publicKey, args)
-        } else {
-          fileType === "Plaintext" ? await uploadPlainText(data, args) : await uploadEncryptedText(data, fileType.Encrypted.publicKey, args)
-        }
+      const key = fileKey ? fileKey : nanoid()
+      const args = {key, isPrivate, Actor, dataBox: this}
+      if (data instanceof File || data instanceof Blob) {
+        fileType === "Plaintext" ? await uploadPlainFile(data, args) : await uploadEncryptedFile(data, fileType.Encrypted.publicKey, args)
+      } else if (data instanceof Uint8Array) {
+        fileType === "Plaintext" ? await uploadPlainArrayBuffer(data, args) : await uploadEncryptedArrayBuffer(data, fileType.Encrypted.publicKey, args)
+      } else {
+        fileType === "Plaintext" ? await uploadPlainText(data, args) : await uploadEncryptedText(data, fileType.Encrypted.publicKey, args)
       }
-      await Promise.all(allPromise)
-      return _keyArr
+      return key
     } catch (e) {
       throw e
     }
   }
 
-  private async _putPlainFilesToIC(props: {
-    dataArr: DataType[],
+  private async _putPlainFileToIC(props: {
+    data: DataType,
     isPrivate: boolean,
-    keyArr?: string[]
-  }): Promise<string[]> {
+    fileKey?: string
+  }): Promise<string> {
     try {
       return await this._putFileToIC({...props, fileType: "Plaintext"})
     } catch (e) {
@@ -100,10 +91,10 @@ export class DataBox {
   }
 
   private async _putEncryptFilesToIC(props: {
-    dataArr: DataType[],
+    data: DataType,
     publicKey: string,
-    keyArr?: string[]
-  }): Promise<string[]> {
+    fileKey?: string
+  }): Promise<string> {
     const {publicKey} = props
     try {
       return await this._putFileToIC({
@@ -129,8 +120,8 @@ export class DataBox {
           dataArr.push(e.ok)
           fileSize += e.ok.length
         })
-        const metadata = await DataBox.getFile(dataArr, fileSize)
-        if (fileType === "Uint8Array") return metadata
+        const metadata = await getFile(dataArr, fileSize)
+        if (fileType === "uint8array") return metadata
         if (fileType === "text/plain") return new TextDecoder().decode(metadata)
         return new Blob([metadata.buffer], {
           type: fileType,
@@ -141,7 +132,7 @@ export class DataBox {
     }
   }
 
-  private async _getICEncrypted(assetExt: AssetExt, privateKey: string) {
+  private async _getICCiphertext(assetExt: AssetExt, privateKey: string) {
     try {
       const dataArr: Array<Array<number>> = []
       let fileSize = 0
@@ -154,7 +145,7 @@ export class DataBox {
             fileSize += value.length
           })
         })
-        const metadata = await DataBox.getFile(dataArr, fileSize)
+        const metadata = await getFile(dataArr, fileSize)
         const importedPrivateKey = await RSAEncryptApi.importPrivateKey(privateKey);
         const preFileAesKey = await RSAEncryptApi.decryptMessage(
           importedPrivateKey,
@@ -163,7 +154,7 @@ export class DataBox {
         const AesKey = preFileAesKey.slice(0, 256);
         const AesIv = preFileAesKey.slice(256);
         const plainText = AESEncryptApi.AESDecData(metadata, AesKey, AesIv);
-        if (fileType === "Uint8Array") return plainText
+        if (fileType === "uint8array") return plainText
         if (fileType === "text/plain") return new TextDecoder().decode(plainText)
         return new Blob([plainText.buffer], {
           type: fileType,
@@ -193,68 +184,11 @@ export class DataBox {
     }
   }
 
-  static async FileRead(file: File | Blob): Promise<Uint8Array[]> {
-    try {
-      return new Promise((resolve, reject) => {
-        let start = 0;
-        let currentChunk = 0;
-        const total_index = Math.ceil(file.size / chunkSize)
-        const allData: Array<Uint8Array> = []
-        let reader = new FileReader();
-        reader.onload = async function (e: any) {
-          allData.push(new Uint8Array(e.target.result))
-          if (currentChunk === total_index) return resolve(allData)
-          else loadChunk()
-        }
-        reader.onerror = (error) => {
-          reject(error)
-        }
-        const loadChunk = () => {
-          const end = start + chunkSize;
-          currentChunk++;
-          reader.readAsArrayBuffer(file.slice(start, end));
-          start = end;
-        };
-        loadChunk();
-      })
-    } catch (e) {
-      throw e
-    }
-  }
-
-  static async encryptFileData(data: Uint8Array, publicKey: string) {
-    try {
-      const AESKEY = await EncryptApi.aesKeyGen();
-      const AESIv = random(128);
-      const encData = AESEncryptApi.AESEncData(
-        data,
-        AESKEY,
-        AESIv
-      );
-      const encryptedAesKey = await RSAEncryptApi.encryptMessage(
-        publicKey,
-        `${AESKEY}${AESIv}`
-      );
-      return {encData, encryptedAesKey}
-    } catch (e) {
-      throw e
-    }
-  }
-
-  static async getFile(decodeArr: any, length: number): Promise<Uint8Array> {
-    const File = new Uint8Array(length)
-    for (let i = 0; i < decodeArr.length; i++) {
-      let slice = decodeArr[i]
-      let start = 0
-      for (let j = 0; j < i; j++) {
-        start += decodeArr[j].length
-      }
-      File.set(slice, start)
-    }
-    return File
-  }
-
-  public async boxState(): Promise<Result_10> {
+  /**
+   * 获取Box 状态
+   * @return {Result_10}
+   */
+  async boxState(): Promise<Result_10> {
     try {
       return await this.DataBoxActor.canisterState() as Result_10
     } catch (e) {
@@ -262,7 +196,11 @@ export class DataBox {
     }
   }
 
-  public async cycleBalance(): Promise<Result_7> {
+  /**
+   * 获取Box cycle剩余
+   * @return {Result_7}
+   */
+  async cycleBalance(): Promise<Result_7> {
     try {
       return await this.DataBoxActor.cycleBalance() as Result_7
     } catch (e) {
@@ -270,18 +208,32 @@ export class DataBox {
     }
   }
 
-  public putPlaintext(props: {
-    dataArr: DataType[],
+  /**
+   * 上传明文文件
+   *
+   * @param props
+   * @return {string} fileKey
+   *
+   * @example
+   * uploadPlaintextFile({
+   *   data: "hello world",
+   *   isPrivate: true,
+   *   chain: "icp",
+   *   fileKey: "test" // 指定这个文件的fileKey
+   * })
+   *
+   */
+  uploadPlaintextFile(props: {
+    data: DataType,
     isPrivate: boolean,
     chain: Chain,
-    keyArr?: string[]
+    fileKey?: string
   }) {
-    const {keyArr, chain, dataArr} = props
-    return new Promise<string[]>(async (resolve, reject) => {
-      if (keyArr && keyArr.length !== dataArr.length) return reject("文件数量与key数量不匹配")
+    const {chain} = props
+    return new Promise<string>(async (resolve, reject) => {
       if (chain !== "icp") return reject("coming soon")
       try {
-        const res = await this._putPlainFilesToIC({...props})
+        const res = await this._putPlainFileToIC({...props})
         return resolve(res)
       } catch (e) {
         reject(e)
@@ -289,15 +241,19 @@ export class DataBox {
     })
   }
 
-  public putEncrypted(props: {
-    dataArr: DataType[],
+  /**
+   * 上传密文文件
+   *
+   * @param props
+   */
+  uploadCiphertextFile(props: {
+    data: DataType,
     chain: Chain,
     publicKey: string,
-    keyArr?: string[]
+    fileKey?: string
   }) {
-    const {keyArr, chain, dataArr} = props
-    return new Promise<string[]>(async (resolve, reject) => {
-      if (keyArr && keyArr.length !== dataArr.length) return reject("文件数量与key数量不匹配")
+    const {chain} = props
+    return new Promise<string>(async (resolve, reject) => {
       if (chain !== "icp") return reject("coming soon")
       try {
         const res = await this._putEncryptFilesToIC({...props})
@@ -309,7 +265,15 @@ export class DataBox {
   }
 
 
-  public async getPlaintext(fileKey: string): Promise<Blob | string | Uint8Array> {
+  /**
+   *
+   * 获取明文文件
+   *
+   * @param { string } fileKey
+   * @return {Blob | string | Uint8Array} 根据此文件的类型返回相应类型
+   *
+   */
+  async getPlaintextFile(fileKey: string): Promise<Blob | string | Uint8Array> {
     try {
       const file_info = await this.getFileInfo(fileKey)
       if ("ok" in file_info) {
@@ -324,7 +288,12 @@ export class DataBox {
     }
   }
 
-  public async getEncryptedFile(fileKey: string, privateKey: string): Promise<Blob | string | Uint8Array> {
+  /**
+   *
+   * @param fileKey
+   * @param privateKey
+   */
+  async getCiphertextFile(fileKey: string, privateKey: string): Promise<Blob | string | Uint8Array> {
     try {
 
       const file_info = await this.getFileInfo(fileKey)
@@ -332,7 +301,7 @@ export class DataBox {
         if ("EncryptFileExt" in file_info.ok) {
           const location = file_info.ok.EncryptFileExt.page_field
           if ("Arweave" in location || "IPFS" in location) throw new Error("coming soon")
-          return await this._getICEncrypted(file_info.ok.EncryptFileExt, privateKey)
+          return await this._getICCiphertext(file_info.ok.EncryptFileExt, privateKey)
         } else throw new Error("this is not a encrypted file")
       } else throw new Error(Object.keys(file_info.err)[0])
     } catch (e) {
@@ -340,7 +309,12 @@ export class DataBox {
     }
   }
 
-  public async deletePlaintext(fileKey: string): Promise<Result_1> {
+  /**
+   * 删除明文文件
+   *
+   * @param fileKey
+   */
+  async deletePlaintextFile(fileKey: string): Promise<Result_1> {
     try {
       return await this.DataBoxActor.deleteFileFromKey(fileKey, {'Plain': null}) as Result_1
     } catch (e) {
@@ -348,7 +322,12 @@ export class DataBox {
     }
   }
 
-  public async deleteEncryptedFile(fileKey: string): Promise<Result_1> {
+  /**
+   * 删除密文文件
+   *
+   * @param fileKey
+   */
+  async deleteCiphertextFile(fileKey: string): Promise<Result_1> {
     try {
       return await this.DataBoxActor.deleteFileFromKey(fileKey, {'EnCrypt': null}) as Result_1
     } catch (e) {
@@ -356,7 +335,11 @@ export class DataBox {
     }
   }
 
-  public async clearBox(): Promise<Result_1> {
+  /**
+   * 删除Box所以文件
+   *
+   */
+  async clearBox(): Promise<Result_1> {
     try {
       return await this.DataBoxActor.clearall() as Result_1
     } catch (e) {
@@ -364,7 +347,14 @@ export class DataBox {
     }
   }
 
-  public async getFileInfo(fileKey: string): Promise<Result_2> {
+  /**
+   *
+   * 获取指定file的信息
+   *
+   * @param {string} fileKey
+   * @return {Result_2}
+   */
+  async getFileInfo(fileKey: string): Promise<Result_2> {
     try {
       return await this.DataBoxActor.getAssetextkey(fileKey) as Result_2
     } catch (e) {
@@ -372,7 +362,11 @@ export class DataBox {
     }
   }
 
-  public async getBoxVersion(): Promise<bigint> {
+  /**
+   * 获取Box的版本
+   *
+   */
+  async getBoxVersion(): Promise<bigint> {
     try {
       return await this.DataBoxActor.getVersion() as bigint
     } catch (e) {
@@ -380,7 +374,12 @@ export class DataBox {
     }
   }
 
-  public async getAllFilesInfo(): Promise<Result_9> {
+  /**
+   * 获取Box中所有文件信息
+   *
+   * @return {Result_9}
+   */
+  async getAllFileInfo(): Promise<Result_9> {
     try {
       return await this.DataBoxActor.getAssetexts() as Result_9
     } catch (e) {
@@ -388,23 +387,78 @@ export class DataBox {
     }
   }
 
-  async transferOwner(to: Principal): Promise<Result_1> {
+  /**
+   * 获取Box中所有密文文件信息
+   *
+   * @return {AssetExt[]}
+   *
+   */
+  async getAllCiphertextFileInfo(): Promise<AssetExt[]> {
+    const res = await this.getAllFileInfo()
+    if ("err" in res) throw new Error(Object.keys(res.err)[0])
+    const encryptFile: AssetExt[] = [];
+    for (let i = 0; i < res.ok[1].length; i++) {
+      const fileExt: FileExt = res.ok[1][i]
+      if ("EncryptFileExt" in fileExt) encryptFile.push(fileExt.EncryptFileExt)
+      else throw new Error("not a encrypted file")
+    }
+    return encryptFile
+  }
+
+  /**
+   * 获取Box中所有明文文件信息
+   *
+   * @return {AssetExt[]}
+   *
+   */
+  async getAllPlaintextFileInfo(): Promise<AssetExt[]> {
+    const res = await this.getAllFileInfo()
+    const plainFile: AssetExt[] = [];
+    if ("err" in res) throw new Error(Object.keys(res.err)[0])
+    for (let i = 0; i < res.ok[0].length; i++) {
+      const fileExt: FileExt = res.ok[0][i]
+      if ("PlainFileExt" in fileExt) plainFile.push(fileExt.PlainFileExt)
+      else throw new Error("not a plaintext file")
+    }
+    return plainFile
+  }
+
+
+  /**
+   * 转移Box owner
+   *
+   * @param to
+   */
+  async transferBoxOwner(to: Identity): Promise<Result_1> {
     try {
-      return await this.DataBoxActor.transferOwner(to) as Result_1
+      if ("ICP" in to) return await this.DataBoxActor.transferOwner(to.ICP) as Result_1
+      throw new Error("coming soon")
     } catch (e) {
       throw e
     }
   }
 
-  public async getOwner(): Promise<Principal> {
+  /**
+   *
+   * 获取Box owner
+   *
+   */
+  async getBoxOwner(): Promise<BoxID> {
     try {
-      return await this.DataBoxActor.getOwner() as Principal
+      return await this.DataBoxActor.getOwner() as BoxID
     } catch (e) {
       throw e
     }
   }
 
-  public async setPlainFilePubOrPri(changePlainFilePermissionArg: changePlainFilePermissionArg): Promise<Result_1> {
+  /**
+   *
+   * 设置明文文件是否 private
+   *
+   * @param {changePlainFilePermissionArg} changePlainFilePermissionArg
+   *
+   */
+  async setPlaintextFileVisibility(changePlainFilePermissionArg: changePlainFilePermissionArg): Promise<Result_1> {
     try {
       return await this.DataBoxActor.setPlainFilePubOrPri(changePlainFilePermissionArg.file_key, changePlainFilePermissionArg.is_private) as Result_1
     } catch (e) {
@@ -412,7 +466,13 @@ export class DataBox {
     }
   }
 
-  public async addPrivatePlainShare(shareFileArg: shareFileArg): Promise<Result_1> {
+  /**
+   *
+   * 分享明文但是private的文件
+   *
+   * @param shareFileArg
+   */
+  async sharePrivatePlaintextFile(shareFileArg: shareFileArg): Promise<Result_1> {
     try {
       return await this.DataBoxActor.addPrivatePlainShare(shareFileArg.file_key, shareFileArg.to) as Result_1
     } catch (e) {
@@ -420,7 +480,12 @@ export class DataBox {
     }
   }
 
-  public async removePrivatePlainShare(shareFileArg: shareFileArg): Promise<Result_1> {
+  /**
+   * 取消分享
+   *
+   * @param shareFileArg
+   */
+  async cancelSharePrivatePlaintextFile(shareFileArg: shareFileArg): Promise<Result_1> {
     try {
       return await this.DataBoxActor.removePrivatePlainShare(shareFileArg.file_key, shareFileArg.to) as Result_1
     } catch (e) {
@@ -428,7 +493,13 @@ export class DataBox {
     }
   }
 
-  public async getShareFiles(): Promise<Result_3> {
+  /**
+   * 获取分享出去的所有文件信息
+   *
+   * @return {Result_3}
+   *
+   */
+  async getShareFiles(): Promise<Result_3> {
     try {
       return await this.DataBoxActor.getShareFiles() as Result_3
     } catch (e) {
@@ -436,7 +507,11 @@ export class DataBox {
     }
   }
 
-  public async isNeedUpgrade(): Promise<boolean> {
+  /**
+   * 判断是否Box需要更新
+   *
+   */
+  async isNeedUpgrade(): Promise<boolean> {
     try {
       const MBapi = new MetaBox(this.agent)
       const version = Number(await this.getBoxVersion())
@@ -447,35 +522,32 @@ export class DataBox {
     }
   }
 
-  public async isEnoughToUpload(totalSize: number): Promise<boolean> {
-    return new Promise<boolean>(async (resolve, reject) => {
-      try {
-        const res = await this.cycleBalance()
-        if ("ok" in res) {
-          const balance = Number(res.ok)
-          if (totalSize * ONE_BYTE_UPLOAD_USE_CYCLES < balance) {
-            return resolve(true)
-          } else return reject(Number(totalSize * ONE_BYTE_UPLOAD_USE_CYCLES - balance))
-        } else return reject(String(Object.keys(res.err)[0]))
-      } catch (e) {
-        return reject(e)
-      }
-    })
-  }
 
-  async addCon(to: Principal): Promise<Result_1> {
+  /**
+   * 给Box增加controller
+   *
+   * @param who
+   */
+  async addBoxController(who: Identity): Promise<Result_1> {
     try {
+      if (!("ICP" in who)) throw new Error("coming soon")
       const Actor = this.DataBoxActor;
-      return await Actor.addCon(to) as Result_1
+      return await Actor.addCon(who.ICP) as Result_1
     } catch (e) {
       throw e
     }
   }
 
-  async deleteCon(to: Principal): Promise<Result_1> {
+  /**
+   * 删除Box 指定Controller
+   *
+   * @param who
+   */
+  async deleteBoxController(who: Identity): Promise<Result_1> {
     try {
+      if (!("ICP" in who)) throw new Error("coming soon")
       const Actor = this.DataBoxActor;
-      return await Actor.deleteCon(to) as Result_1
+      return await Actor.deleteCon(who.ICP) as Result_1
     } catch (e) {
       throw e
     }
@@ -486,7 +558,7 @@ export class DataBox {
    * @param {FileLocation} fileLocation 文件位置
    * @return {Result_7} 数据个数
    */
-  public async getFileNums(fileLocation: FileLocation): Promise<Result_7> {
+  async getFileCount(fileLocation: FileLocation): Promise<Result_7> {
     try {
       return await this.DataBoxActor.getFileNums(fileLocation) as Result_7
     } catch (e) {
@@ -498,16 +570,16 @@ export class DataBox {
    * 分页get数据
    *
    * @param {FileLocation} fileLocation 文件位置
-   * @param {number} onePageFileNums 每一页的数据大小 不能超过5000
+   * @param {number} onePageFileCount 每一页的数据大小 不能超过5000
    * @param {number} pageIndex 取哪一页
    * @example
-   * getPageFiles({Plain:null},2,0) 取明文数据，每一页有两个数据，取第一页
+   * getFilesOfPage({Plain:null},2,0) 取明文数据，每一页有两个数据，取第一页
    */
-  public getPageFiles(fileLocation: FileLocation, onePageFileNums: number, pageIndex: number) {
+  getFilesOfPage(fileLocation: FileLocation, onePageFileCount: number, pageIndex: number) {
     return new Promise<FileExt[]>(async (resolve, reject) => {
       try {
-        if (onePageFileNums > 5000) return reject("A page of data cannot exceed 5000")
-        const res = await this.DataBoxActor.getPageFiles(fileLocation, BigInt(onePageFileNums), BigInt(pageIndex)) as Result_5
+        if (onePageFileCount > 5000) return reject("A page of data cannot exceed 5000")
+        const res = await this.DataBoxActor.getPageFiles(fileLocation, BigInt(onePageFileCount), BigInt(pageIndex)) as Result_5
         if ("ok" in res) return resolve(res.ok)
         else return reject(Object.keys(res.err)[0])
       } catch (e) {
