@@ -12,7 +12,6 @@ import {
   Result_7,
   Result_9
 } from "./did/databox_type";
-import {nanoid} from "nanoid";
 import {Principal as BoxID} from "@dfinity/principal";
 import {changePlainFilePermissionArg, shareFileArg} from "../types";
 import {AESEncryptApi, getFile, RSAEncryptApi} from "../utils";
@@ -63,6 +62,7 @@ export class Box {
     const {data, isPrivate, fileType, fileKey} = props
     try {
       const Actor = this.DataBoxActor
+      const {nanoid} = await import('nanoid');
       const key = fileKey ? fileKey : nanoid()
       const args = {key, isPrivate, Actor, dataBox: this}
       if (data instanceof File || data instanceof Blob) {
