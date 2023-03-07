@@ -6,6 +6,7 @@ import {EncryptApi} from "./Encrypt";
 import random from "string-random";
 import {AESEncryptApi} from "./AESEncrypt";
 import {RSAEncryptApi} from "./RSAEncrypt";
+import {DataErr, FilePut} from "../databox/did/databox_type";
 
 export const chunkSize = 1992288
 const endpoint = "https://data.binance.com/api/v3"
@@ -167,4 +168,70 @@ export const retry = async <T>(promise_arr: (() => Promise<retry_type<T>>)[], ma
       reject(e)
     }
   })
+}
+
+export const splitArray = <T>(arr: T[], len: number): T[][] => {
+  const arrLength = arr.length
+  const newArr: T[][] = []
+  for (let i = 0; i < arrLength; i += len) {
+    newArr.push(arr.slice(i, i + len))
+  }
+  return newArr
+}
+
+export const batchRequest = (arr: FilePut[], chunkSize: number): FilePut[][] => {
+  const newArr: FilePut[][] = []
+  let index: number = 0
+  let subArray: FilePut[] = []
+  while (index < arr.length) {
+    const item = arr[index]
+    if ("PlainFilePut" in item) {
+      const put = item.PlainFilePut
+      if ("IC" in put) {
+        if (getArrayContentSize(subArray) + Number(put.IC.total_size) > chunkSize) {
+          newArr.push(subArray)
+          subArray = []
+        } else {
+          subArray.push(item)
+          index++
+          if (index === arr.length) {
+            newArr.push(subArray)
+          }
+        }
+      } else throw new Error()
+    } else throw new Error()
+  }
+  return newArr
+}
+
+const getArrayContentSize = (arr: FilePut[]) => {
+  let size = 0
+  for (let i = 0; i < arr.length; i++) {
+    const item = arr[i]
+    if ("PlainFilePut" in item) {
+      const put = item.PlainFilePut
+      if ("IC" in put) {
+        const arg = put.IC
+        size += Number(arg.total_size)
+      }
+    }
+  }
+  return size
+}
+
+export const getSubArray = <T extends string>(bigArray: T[], smallArray: T[]) => {
+  if (smallArray.length === 0) return bigArray
+  if (bigArray.length <= smallArray.length) throw new Error("array length error")
+  const newArray: T[] = []
+  for (let i = 0; i < bigArray.length; i++) {
+    const item: T = bigArray[i]
+    const index = smallArray.findIndex(v => v === item)
+    if (index === -1) newArray.push(item)
+  }
+  return newArray
+}
+
+export const ErrorHandler = <T>(result: { 'ok': T } | { 'err': Object }): T => {
+  if ("ok" in result) return result.ok
+  throw new Error(Object.keys(result.err)[0])
 }

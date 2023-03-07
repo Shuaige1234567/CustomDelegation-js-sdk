@@ -18,18 +18,19 @@ export interface AssetExt {
 }
 
 export interface Avatar {
-  'data': Array<number> | Uint8Array,
+  'data': Uint8Array,
   'data_type': string
 }
 
 export interface Chunk {
-  'data': Array<number> | Uint8Array
+  'data': Uint8Array
 }
 
 export interface DataBox {
   'addCon': ActorMethod<[Principal], Result_1>,
   'addPrivatePlainShare': ActorMethod<[string, Principal], Result_1>,
   'avlSM': ActorMethod<[], Result_11>,
+  'batchPut': ActorMethod<[Array<FilePut>], Array<Result_2>>,
   'canisterState': ActorMethod<[], Result_10>,
   'clearBuffer': ActorMethod<[], undefined>,
   'clearall': ActorMethod<[], Result_1>,
@@ -52,6 +53,7 @@ export interface DataBox {
   'getSharedAesPublic': ActorMethod<[string], Result_1>,
   'getVersion': ActorMethod<[], bigint>,
   'http_request': ActorMethod<[HttpRequest], HttpResponse>,
+  'memAlign': ActorMethod<[], undefined>,
   'put': ActorMethod<[FilePut], Result_2>,
   'removePrivatePlainShare': ActorMethod<[string, Principal], Result_1>,
   'setPlainFilePubOrPri': ActorMethod<[string, boolean], Result_1>,
@@ -125,12 +127,12 @@ export type HeaderField = [string, string];
 export interface HttpRequest {
   'url': string,
   'method': string,
-  'body': Array<number>,
+  'body': Uint8Array,
   'headers': Array<HeaderField>,
 }
 
 export interface HttpResponse {
-  'body': Array<number>,
+  'body': Uint8Array,
   'headers': Array<HeaderField>,
   'streaming_strategy': [] | [StreamingStrategy],
   'status_code': number,
@@ -172,7 +174,7 @@ export type Result_2 = { 'ok': FileExt } |
   { 'err': DataErr };
 export type Result_3 = { 'ok': [Array<FileExt>, Array<FileExt>] } |
   { 'err': DataErr };
-export type Result_4 = { 'ok': Array<number> } |
+export type Result_4 = { 'ok': Uint8Array } |
   { 'err': DataErr };
 export type Result_5 = { 'ok': Array<FileExt> } |
   { 'err': DataErr };
@@ -180,7 +182,7 @@ export type Result_6 = { 'ok': Array<Principal> } |
   { 'err': DataErr };
 export type Result_7 = { 'ok': bigint } |
   { 'err': DataErr };
-export type Result_8 = { 'ok': Array<Array<number>> } |
+export type Result_8 = { 'ok': Array<Uint8Array> } |
   { 'err': DataErr };
 export type Result_9 = {
   'ok': [Array<FileExt>, Array<FileExt>, Array<FileExt>]
@@ -195,12 +197,12 @@ export interface State {
 
 export interface StreamingCallbackHttpResponse {
   'token': [] | [StreamingToken__1],
-  'body': Array<number>,
+  'body': Uint8Array,
 }
 
 export interface StreamingCallbackHttpResponse__1 {
   'token': [] | [StreamingToken__1],
-  'body': Array<number>,
+  'body': Uint8Array,
 }
 
 export type StreamingStrategy = {

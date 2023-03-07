@@ -3,18 +3,18 @@ import {Actor, ActorMethod, ActorSubclass, HttpAgent} from "@dfinity/agent";
 import {
   AssetExt,
   FileExt,
-  FileLocation,
+  FileLocation, FilePut,
   Result_1,
   Result_10,
   Result_2,
   Result_3,
   Result_5,
   Result_7,
-  Result_9
+  Result_9, State
 } from "./did/databox_type";
 import {Principal as BoxID} from "@dfinity/principal";
 import {changePlainFilePermissionArg, shareFileArg} from "../types";
-import {AESEncryptApi, getFile, RSAEncryptApi} from "../utils";
+import {AESEncryptApi, ErrorHandler, getFile, retry, RSAEncryptApi} from "../utils";
 import {MetaBox, Wallet} from "../metabox";
 import {
   uploadEncryptedArrayBuffer,
@@ -184,13 +184,30 @@ export class Box {
     }
   }
 
+
+  batchPut(fileArr: FilePut[], index: number) {
+    return () => {
+      return new Promise<{ data: Array<Result_2>, index: number }>(async (resolve, reject) => {
+        try {
+          const Actor = await this.DataBoxActor
+          const res = await Actor.batchPut(fileArr) as Array<Result_2>
+          return resolve({data: res, index})
+        } catch (e) {
+          reject(e)
+        }
+      })
+    }
+  }
+
+
   /**
    * 获取Box 状态
-   * @return {Result_10}
+   * @return {State}
    */
-  async boxState(): Promise<Result_10> {
+  async boxState(): Promise<State> {
     try {
-      return await this.DataBoxActor.canisterState() as Result_10
+      const res = await this.DataBoxActor.canisterState() as Result_10
+      return ErrorHandler(res)
     } catch (e) {
       throw e
     }
@@ -198,11 +215,12 @@ export class Box {
 
   /**
    * 获取Box cycle剩余
-   * @return {Result_7}
+   * @return {bigint}
    */
-  async cycleBalance(): Promise<Result_7> {
+  async cycleBalance(): Promise<bigint> {
     try {
-      return await this.DataBoxActor.cycleBalance() as Result_7
+      const res = await this.DataBoxActor.cycleBalance() as Result_7
+      return ErrorHandler(res)
     } catch (e) {
       throw e
     }
@@ -276,13 +294,11 @@ export class Box {
   async getPlaintextFile(fileKey: string): Promise<Blob | string | Uint8Array> {
     try {
       const file_info = await this.getFileInfo(fileKey)
-      if ("ok" in file_info) {
-        if ("PlainFileExt" in file_info.ok) {
-          const location = file_info.ok.PlainFileExt.page_field
-          if ("Arweave" in location || "IPFS" in location) throw new Error("coming soon")
-          return await this._getICPlaintext(file_info.ok.PlainFileExt)
-        } else throw new Error("this is not a plain file")
-      } else throw new Error(Object.keys(file_info.err)[0])
+      if ("PlainFileExt" in file_info) {
+        const location = file_info.PlainFileExt.page_field
+        if ("Arweave" in location || "IPFS" in location) throw new Error("coming soon")
+        return await this._getICPlaintext(file_info.PlainFileExt)
+      } else throw new Error("this is not a plain file")
     } catch (e) {
       throw e
     }
@@ -295,15 +311,12 @@ export class Box {
    */
   async getCiphertextFile(fileKey: string, privateKey: string): Promise<Blob | string | Uint8Array> {
     try {
-
       const file_info = await this.getFileInfo(fileKey)
-      if ("ok" in file_info) {
-        if ("EncryptFileExt" in file_info.ok) {
-          const location = file_info.ok.EncryptFileExt.page_field
-          if ("Arweave" in location || "IPFS" in location) throw new Error("coming soon")
-          return await this._getICCiphertext(file_info.ok.EncryptFileExt, privateKey)
-        } else throw new Error("this is not a encrypted file")
-      } else throw new Error(Object.keys(file_info.err)[0])
+      if ("EncryptFileExt" in file_info) {
+        const location = file_info.EncryptFileExt.page_field
+        if ("Arweave" in location || "IPFS" in location) throw new Error("coming soon")
+        return await this._getICCiphertext(file_info.EncryptFileExt, privateKey)
+      } else throw new Error("this is not a encrypted file")
     } catch (e) {
       throw e
     }
@@ -314,9 +327,10 @@ export class Box {
    *
    * @param fileKey
    */
-  async deletePlaintextFile(fileKey: string): Promise<Result_1> {
+  async deletePlaintextFile(fileKey: string): Promise<string> {
     try {
-      return await this.DataBoxActor.deleteFileFromKey(fileKey, {'Plain': null}) as Result_1
+      const res = await this.DataBoxActor.deleteFileFromKey(fileKey, {'Plain': null}) as Result_1
+      return ErrorHandler(res)
     } catch (e) {
       throw e
     }
@@ -327,9 +341,10 @@ export class Box {
    *
    * @param fileKey
    */
-  async deleteCiphertextFile(fileKey: string): Promise<Result_1> {
+  async deleteCiphertextFile(fileKey: string): Promise<string> {
     try {
-      return await this.DataBoxActor.deleteFileFromKey(fileKey, {'EnCrypt': null}) as Result_1
+      const res = await this.DataBoxActor.deleteFileFromKey(fileKey, {'EnCrypt': null}) as Result_1
+      return ErrorHandler(res)
     } catch (e) {
       throw e
     }
@@ -339,9 +354,10 @@ export class Box {
    * 删除Box所以文件
    *
    */
-  async clearBox(): Promise<Result_1> {
+  async clearBox(): Promise<string> {
     try {
-      return await this.DataBoxActor.clearall() as Result_1
+      const res = await this.DataBoxActor.clearall() as Result_1
+      return ErrorHandler(res)
     } catch (e) {
       throw e
     }
@@ -352,11 +368,12 @@ export class Box {
    * 获取指定file的信息
    *
    * @param {string} fileKey
-   * @return {Result_2}
+   * @return {FileExt}
    */
-  async getFileInfo(fileKey: string): Promise<Result_2> {
+  async getFileInfo(fileKey: string): Promise<FileExt> {
     try {
-      return await this.DataBoxActor.getAssetextkey(fileKey) as Result_2
+      const res = await this.DataBoxActor.getAssetextkey(fileKey) as Result_2
+      return ErrorHandler(res)
     } catch (e) {
       throw e
     }
@@ -377,11 +394,12 @@ export class Box {
   /**
    * 获取Box中所有文件信息
    *
-   * @return {Result_9}
+   * @return {[Array<FileExt>, Array<FileExt>, Array<FileExt>]}
    */
-  async getAllFileInfo(): Promise<Result_9> {
+  async getAllFileInfo(): Promise<[Array<FileExt>, Array<FileExt>, Array<FileExt>]> {
     try {
-      return await this.DataBoxActor.getAssetexts() as Result_9
+      const res = await this.DataBoxActor.getAssetexts() as Result_9
+      return ErrorHandler(res)
     } catch (e) {
       throw e
     }
@@ -395,10 +413,9 @@ export class Box {
    */
   async getAllCiphertextFileInfo(): Promise<AssetExt[]> {
     const res = await this.getAllFileInfo()
-    if ("err" in res) throw new Error(Object.keys(res.err)[0])
     const encryptFile: AssetExt[] = [];
-    for (let i = 0; i < res.ok[1].length; i++) {
-      const fileExt: FileExt = res.ok[1][i]
+    for (let i = 0; i < res[1].length; i++) {
+      const fileExt: FileExt = res[1][i]
       if ("EncryptFileExt" in fileExt) encryptFile.push(fileExt.EncryptFileExt)
       else throw new Error("not a encrypted file")
     }
@@ -414,9 +431,8 @@ export class Box {
   async getAllPlaintextFileInfo(): Promise<AssetExt[]> {
     const res = await this.getAllFileInfo()
     const plainFile: AssetExt[] = [];
-    if ("err" in res) throw new Error(Object.keys(res.err)[0])
-    for (let i = 0; i < res.ok[0].length; i++) {
-      const fileExt: FileExt = res.ok[0][i]
+    for (let i = 0; i < res[0].length; i++) {
+      const fileExt: FileExt = res[0][i]
       if ("PlainFileExt" in fileExt) plainFile.push(fileExt.PlainFileExt)
       else throw new Error("not a plaintext file")
     }
@@ -458,9 +474,10 @@ export class Box {
    * @param {changePlainFilePermissionArg} changePlainFilePermissionArg
    *
    */
-  async setPlaintextFileVisibility(changePlainFilePermissionArg: changePlainFilePermissionArg): Promise<Result_1> {
+  async setPlaintextFileVisibility(changePlainFilePermissionArg: changePlainFilePermissionArg): Promise<string> {
     try {
-      return await this.DataBoxActor.setPlainFilePubOrPri(changePlainFilePermissionArg.file_key, changePlainFilePermissionArg.is_private) as Result_1
+      const res = await this.DataBoxActor.setPlainFilePubOrPri(changePlainFilePermissionArg.file_key, changePlainFilePermissionArg.is_private) as Result_1
+      return ErrorHandler(res)
     } catch (e) {
       throw e
     }
@@ -472,9 +489,10 @@ export class Box {
    *
    * @param shareFileArg
    */
-  async sharePrivatePlaintextFile(shareFileArg: shareFileArg): Promise<Result_1> {
+  async sharePrivatePlaintextFile(shareFileArg: shareFileArg): Promise<string> {
     try {
-      return await this.DataBoxActor.addPrivatePlainShare(shareFileArg.file_key, shareFileArg.to) as Result_1
+      const res = await this.DataBoxActor.addPrivatePlainShare(shareFileArg.file_key, shareFileArg.to) as Result_1
+      return ErrorHandler(res)
     } catch (e) {
       throw e
     }
@@ -485,9 +503,10 @@ export class Box {
    *
    * @param shareFileArg
    */
-  async cancelSharePrivatePlaintextFile(shareFileArg: shareFileArg): Promise<Result_1> {
+  async cancelSharePrivatePlaintextFile(shareFileArg: shareFileArg): Promise<string> {
     try {
-      return await this.DataBoxActor.removePrivatePlainShare(shareFileArg.file_key, shareFileArg.to) as Result_1
+      const res = await this.DataBoxActor.removePrivatePlainShare(shareFileArg.file_key, shareFileArg.to) as Result_1
+      return ErrorHandler(res)
     } catch (e) {
       throw e
     }
@@ -496,12 +515,13 @@ export class Box {
   /**
    * 获取分享出去的所有文件信息
    *
-   * @return {Result_3}
+   * @return {[Array<FileExt>, Array<FileExt>]}
    *
    */
-  async getShareFiles(): Promise<Result_3> {
+  async getShareFiles(): Promise<[Array<FileExt>, Array<FileExt>]> {
     try {
-      return await this.DataBoxActor.getShareFiles() as Result_3
+      const res = await this.DataBoxActor.getShareFiles() as Result_3
+      return ErrorHandler(res)
     } catch (e) {
       throw e
     }
@@ -556,11 +576,12 @@ export class Box {
   /**
    *
    * @param {FileLocation} fileLocation 文件位置
-   * @return {Result_7} 数据个数
+   * @return {bigint} 数据个数
    */
-  async getFileCount(fileLocation: FileLocation): Promise<Result_7> {
+  async getFileCount(fileLocation: FileLocation): Promise<bigint> {
     try {
-      return await this.DataBoxActor.getFileNums(fileLocation) as Result_7
+      const res = await this.DataBoxActor.getFileNums(fileLocation) as Result_7
+      return ErrorHandler(res)
     } catch (e) {
       throw e
     }
@@ -583,9 +604,50 @@ export class Box {
         if ("ok" in res) return resolve(res.ok)
         else return reject(Object.keys(res.err)[0])
       } catch (e) {
-        throw e
+        reject(e)
       }
     })
   }
 
+  /**
+   * 分页获取所有数据
+   *
+   */
+  batchGetAllFileInfo(fileLocation: FileLocation, onePageCount: number) {
+    return new Promise<FileExt[]>(async (resolve, reject) => {
+      try {
+        if (onePageCount <= 0) return reject("must be greater than zero")
+        const allFileCountsRes = await this.getFileCount({'Plain': null})
+        const allCounts = Number(allFileCountsRes)
+        if (allCounts === 0) return resolve([])
+        const pageNumber = Math.ceil(allCounts / onePageCount)
+        const allPromises: (() => Promise<{ data: FileExt[], index: number }>)[] = []
+        const one_request = (index: number) => {
+          return (): Promise<{ data: FileExt[], index: number }> => {
+            return new Promise(async (resolve, reject) => {
+              try {
+                const res = await this.getFilesOfPage(fileLocation, onePageCount, index)
+                return resolve({data: res, index})
+              } catch (e) {
+                reject(e)
+              }
+            })
+          }
+        }
+        for (let i = 0; i < pageNumber; i++) {
+          allPromises.push(one_request(i))
+        }
+        const res: { data: FileExt[], index: number }[] = await retry(allPromises, 4)
+        const allFilesInfo: FileExt[] = []
+        res.forEach(e => {
+          e.data.forEach(v => {
+            allFilesInfo.push(v)
+          })
+        })
+        return resolve(allFilesInfo)
+      } catch (e) {
+        reject(e)
+      }
+    })
+  }
 }

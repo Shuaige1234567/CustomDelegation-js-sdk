@@ -268,7 +268,7 @@ export const uploadEncryptedFile = async (file: File | Blob, publicKey: string, 
 }
 
 export const uploadEncryptedArrayBuffer = async (data: Uint8Array, publicKey: string, props: Props) => {
-  const blob = new Blob([data], {type: "Uint8Array"})
+  const blob = new Blob([data], {type: "uint8array"})
   await uploadEncryptedFile(blob, publicKey, props)
 }
 
@@ -312,7 +312,7 @@ export const uploadPlainFile = async (file: File | Blob, props: Props): Promise<
 }
 
 export const uploadPlainArrayBuffer = async (data: Uint8Array, props: Props) => {
-  const blob = new Blob([data], {type: "Uint8Array"})
+  const blob = new Blob([data], {type: "uint8array"})
   await uploadPlainFile(blob, props)
 }
 
@@ -330,20 +330,18 @@ const isEnoughToUpload = (chunkNumber: number, dataBox: Box): Promise<boolean> =
   return new Promise<boolean>(async (resolve, reject) => {
     try {
       const res = await dataBox.boxState()
-      if ("ok" in res) {
-        const totalSize = chunkNumber * chunkSize
-        const memory: number = Number(res.ok.memory_size) + Number(res.ok.stable_memory_size)
-        const balance: number = Number(res.ok.balance)
-        const finalSize: number = memory + totalSize // 之前的大小加上这次的大小
-        const GbNumber = (finalSize / (1024 * 1024 * 1024)).toFixed(4); // 多少 GB
-        const storeThresholdCost: number = Number(GbNumber) * ONE_GB_STORE_THRESHOLD_COST // 加上此次存储大小之后存储40天花费
-        const totalStorageCost: number = totalSize * ONE_BYTE_UPLOAD_USE_CYCLES //存进去花费
-        const totalIngressCost: number = chunkNumber * ONE_INGRESS_MESSAGE_COST //ingress message花费
+      const totalSize = chunkNumber * chunkSize
+      const memory: number = Number(res.memory_size) + Number(res.stable_memory_size)
+      const balance: number = Number(res.balance)
+      const finalSize: number = memory + totalSize // 之前的大小加上这次的大小
+      const GbNumber = (finalSize / (1024 * 1024 * 1024)).toFixed(4); // 多少 GB
+      const storeThresholdCost: number = Number(GbNumber) * ONE_GB_STORE_THRESHOLD_COST // 加上此次存储大小之后存储40天花费
+      const totalStorageCost: number = totalSize * ONE_BYTE_UPLOAD_USE_CYCLES //存进去花费
+      const totalIngressCost: number = chunkNumber * ONE_INGRESS_MESSAGE_COST //ingress message花费
 
-        const totalCost: number = totalStorageCost + totalIngressCost + storeThresholdCost
-        if (totalCost < balance) return resolve(true)
-        else return reject(Number(totalCost - balance))
-      } else return reject(String(Object.keys(res.err)[0]))
+      const totalCost: number = totalStorageCost + totalIngressCost + storeThresholdCost
+      if (totalCost < balance) return resolve(true)
+      else return reject(Number(totalCost - balance))
     } catch (e) {
       reject(e)
     }
