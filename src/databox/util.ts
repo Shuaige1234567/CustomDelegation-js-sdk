@@ -119,8 +119,7 @@ const turn_upload_file = async (isEncrypt: boolean, all_keys: string[], all_chun
           return resolve(false)
         }
         count++;
-        const files = await (isEncrypt ? dataBox.getAllCiphertextFileInfo() : dataBox.getAllPlaintextFileInfo())
-        const res = check(all_keys, files)
+        const res = await check(all_keys, dataBox)
         if (res) {
           clearInterval(timer)
           return resolve(true)
@@ -212,8 +211,6 @@ const check_by_read_state = async (all_request_id: RequestId[], DataBoxActor: Ac
   })
 }
 
-const is_subset = (small_arr: string[], big_arr: string[]): boolean => small_arr.every(e => big_arr.includes(e))
-
 
 const get_new_args = (args: ArrayBuffer[], read_state_res_arr: read_state[]) => {
   const new_args: ArrayBuffer[] = []
@@ -226,10 +223,17 @@ const get_new_args = (args: ArrayBuffer[], read_state_res_arr: read_state[]) => 
   return {new_args}
 }
 
-const check = (all_keys: string[], files: AssetExt[]): boolean => {
-  const files_keys: string[] = []
-  files.forEach(e => files_keys.push(e.file_key))
-  return is_subset(all_keys, files_keys)
+const check = async (all_keys: string[], dataBox: Box): Promise<boolean> => {
+  for (let i = 0; i < all_keys.length; i++) {
+    const key = all_keys[i]
+    try {
+      await dataBox.getFileInfo(key)
+    } catch (e: any) {
+      if (e.message === "FileKeyErr") return false
+      throw e
+    }
+  }
+  return true
 }
 
 export const uploadEncryptedFile = async (file: File | Blob, publicKey: string, props: Props) => {

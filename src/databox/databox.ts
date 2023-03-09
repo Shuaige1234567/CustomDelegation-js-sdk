@@ -24,6 +24,7 @@ import {
   uploadPlainText
 } from "./util";
 
+
 type UserID = BoxID
 export type everPayToken = "BNB" | "AR" | "USDT" | "ETH"
 
@@ -370,13 +371,16 @@ export class Box {
    * @param {string} fileKey
    * @return {FileExt}
    */
-  async getFileInfo(fileKey: string): Promise<FileExt> {
-    try {
-      const res = await this.DataBoxActor.getAssetextkey(fileKey) as Result_2
-      return ErrorHandler(res)
-    } catch (e) {
-      throw e
-    }
+  getFileInfo(fileKey: string): Promise<FileExt> {
+    return new Promise<FileExt>(async (resolve, reject) => {
+      try {
+        const res = await this.DataBoxActor.getAssetextkey(fileKey) as Result_2
+        const checkedRes = ErrorHandler(res)
+        return resolve(checkedRes)
+      } catch (e) {
+        return reject(e)
+      }
+    })
   }
 
   /**
