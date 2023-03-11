@@ -163,3 +163,24 @@ import {HttpAgent} from "@dfinity/agent";
 })()
 ```
 
+```js
+/**
+ * 监视Box状态函数
+ *
+ *
+ */
+import {Box, isSecurityThresholdReached} from "js-metabox";
+
+const BoxApi = new Box(cid, agent)
+try {
+  await isSecurityThresholdReached(BoxApi)
+} catch (e) {
+  if (e.message === "Insufficient memory available in this box") {  //表示此box内存不足
+    //....建议更换Box存储
+  } else if (e.message === "The Box has hit its safe cycle limit") {//表示Box cycles不足以维持他静态存储40天
+    const needCycle = e.data //至少需要充值 ${needCycle} 才能维持40天静态存储
+  } else throw e
+}
+
+```
+

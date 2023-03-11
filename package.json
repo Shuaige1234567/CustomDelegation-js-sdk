@@ -1,13 +1,14 @@
 {
   "name": "js-metabox",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "",
   "main": "./cjs/index.js",
   "module": "./esm/index.js",
   "scripts": {
     "build:types": "tsc",
     "build": "rm -rf dist && tsc -p tsconfig.json && tsc -p tsconfig-esm.json",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build_tsup": "tsup src/index.ts --format cjs"
   },
   "keywords": [
     "dfinity",

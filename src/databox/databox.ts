@@ -185,22 +185,6 @@ export class Box {
     }
   }
 
-
-  batchPut(fileArr: FilePut[], index: number) {
-    return () => {
-      return new Promise<{ data: Array<Result_2>, index: number }>(async (resolve, reject) => {
-        try {
-          const Actor = await this.DataBoxActor
-          const res = await Actor.batchPut(fileArr) as Array<Result_2>
-          return resolve({data: res, index})
-        } catch (e) {
-          reject(e)
-        }
-      })
-    }
-  }
-
-
   /**
    * 获取Box 状态
    * @return {State}

@@ -1,4 +1,4 @@
-import {AssetExt, FilePut, Result_2} from "./did/databox_type";
+import {AssetExt, FilePut, Result_2, State} from "./did/databox_type";
 import {
   ActorMethod,
   SubmitResponse,
@@ -27,6 +27,8 @@ type Props = {
   dataBox: Box
 }
 
+export const memory_threshold = 40 * 1024 * 1024 * 1024  // 40G
+
 const getFunc = async (theIDL: Function, method: string): Promise<Func> => {
   const service = theIDL({IDL})
   for (const [methodName, func] of service._fields) {
@@ -53,8 +55,8 @@ const launch_and_check_one_file = (isEncrypt: boolean, methodName: string, args:
   return new Promise<boolean>(async (resolve, reject) => {
     try {
       const allChunkNumber = args.length
-      const isEnoughToCall = await isEnoughToUpload(args.length, dataBox)
-      if (!isEnoughToCall) return reject("cycles is not enough")
+      const IsItPossible = await checkState(args.length, dataBox)
+      if (!IsItPossible) return reject("cycles is not enough")
       const all_request_id = await call_all(methodName, args, DataBoxActor)
       const is_success = await turn_upload_file(isEncrypt, [all_file_key], allChunkNumber, dataBox)
       if (is_success) {
@@ -328,9 +330,9 @@ export const uploadPlainText = async (text: string, props: Props) => {
 
 const ONE_BYTE_UPLOAD_USE_CYCLES = 2260
 const ONE_INGRESS_MESSAGE_COST = 1200000
-const ONE_GB_STORE_THRESHOLD_COST = 127000 * 40 * 24 * 60 * 60
+export const ONE_GB_STORE_THRESHOLD_COST = 127000 * 40 * 24 * 60 * 60
 
-const isEnoughToUpload = (chunkNumber: number, dataBox: Box): Promise<boolean> => {
+const checkState = (chunkNumber: number, dataBox: Box): Promise<boolean> => {
   return new Promise<boolean>(async (resolve, reject) => {
     try {
       const res = await dataBox.boxState()
@@ -338,6 +340,7 @@ const isEnoughToUpload = (chunkNumber: number, dataBox: Box): Promise<boolean> =
       const memory: number = Number(res.memory_size) + Number(res.stable_memory_size)
       const balance: number = Number(res.balance)
       const finalSize: number = memory + totalSize // 之前的大小加上这次的大小
+      if (finalSize > memory_threshold) return reject("Not enough storage")
       const GbNumber = (finalSize / (1024 * 1024 * 1024)).toFixed(4); // 多少 GB
       const storeThresholdCost: number = Number(GbNumber) * ONE_GB_STORE_THRESHOLD_COST // 加上此次存储大小之后存储40天花费
       const totalStorageCost: number = totalSize * ONE_BYTE_UPLOAD_USE_CYCLES //存进去花费
@@ -351,3 +354,6 @@ const isEnoughToUpload = (chunkNumber: number, dataBox: Box): Promise<boolean> =
     }
   })
 }
+
+
+

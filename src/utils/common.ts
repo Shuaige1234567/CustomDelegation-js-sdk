@@ -6,7 +6,8 @@ import {EncryptApi} from "./Encrypt";
 import random from "string-random";
 import {AESEncryptApi} from "./AESEncrypt";
 import {RSAEncryptApi} from "./RSAEncrypt";
-import {DataErr, FilePut} from "../databox/did/databox_type";
+import {State} from "../databox/did/databox_type";
+import {Box, memory_threshold, ONE_GB_STORE_THRESHOLD_COST} from "../databox";
 
 export const chunkSize = 1992288
 const endpoint = "https://data.binance.com/api/v3"
@@ -170,68 +171,59 @@ export const retry = async <T>(promise_arr: (() => Promise<retry_type<T>>)[], ma
   })
 }
 
-export const splitArray = <T>(arr: T[], len: number): T[][] => {
-  const arrLength = arr.length
-  const newArr: T[][] = []
-  for (let i = 0; i < arrLength; i += len) {
-    newArr.push(arr.slice(i, i + len))
-  }
-  return newArr
-}
-
-export const batchRequest = (arr: FilePut[], chunkSize: number): FilePut[][] => {
-  const newArr: FilePut[][] = []
-  let index: number = 0
-  let subArray: FilePut[] = []
-  while (index < arr.length) {
-    const item = arr[index]
-    if ("PlainFilePut" in item) {
-      const put = item.PlainFilePut
-      if ("IC" in put) {
-        if (getArrayContentSize(subArray) + Number(put.IC.total_size) > chunkSize) {
-          newArr.push(subArray)
-          subArray = []
-        } else {
-          subArray.push(item)
-          index++
-          if (index === arr.length) {
-            newArr.push(subArray)
-          }
-        }
-      } else throw new Error()
-    } else throw new Error()
-  }
-  return newArr
-}
-
-const getArrayContentSize = (arr: FilePut[]) => {
-  let size = 0
-  for (let i = 0; i < arr.length; i++) {
-    const item = arr[i]
-    if ("PlainFilePut" in item) {
-      const put = item.PlainFilePut
-      if ("IC" in put) {
-        const arg = put.IC
-        size += Number(arg.total_size)
-      }
-    }
-  }
-  return size
-}
-
-export const getSubArray = <T extends string>(bigArray: T[], smallArray: T[]) => {
-  if (smallArray.length === 0) return bigArray
-  if (bigArray.length <= smallArray.length) throw new Error("array length error")
-  const newArray: T[] = []
-  for (let i = 0; i < bigArray.length; i++) {
-    const item: T = bigArray[i]
-    const index = smallArray.findIndex(v => v === item)
-    if (index === -1) newArray.push(item)
-  }
-  return newArray
-}
-
 export const ErrorHandler = <T>(result: { 'ok': T } | { 'err': Object }): T => {
   if ("ok" in result) return result.ok
   throw new Error(Object.keys(result.err)[0])
+}
+
+type ErrorType = {
+  message: string,
+  data: any
+}
+
+export const isMemorySafetyThresholdReached = (boxState: State) => {
+  return new Promise((resolve, reject) => {
+    const memoryUse: number = Number(boxState.memory_size) + Number(boxState.stable_memory_size)
+    if (memoryUse >= memory_threshold) {
+      const error: ErrorType = {
+        message: "Insufficient memory available in this box",
+        data: null
+      }
+      return reject(error)
+    }
+    return resolve(false)
+  })
+}
+
+export const isBalanceSafetyThresholdReached = (boxState: State) => {
+  return new Promise<boolean>((async (resolve, reject) => {
+    try {
+      const balance: number = Number(boxState.balance)
+      const memoryUse: number = Number(boxState.memory_size) + Number(boxState.stable_memory_size)
+      const GbNumber = (memoryUse / (1024 * 1024 * 1024)).toFixed(4); // 多少 GB
+      const storeThresholdCost: number = Number(GbNumber) * ONE_GB_STORE_THRESHOLD_COST // 存储40天花费
+
+      if (storeThresholdCost < balance) return resolve(false)
+      const error: ErrorType = {
+        message: "The Box has hit its safe cycle limit",
+        data: Number(storeThresholdCost - balance)
+      }
+      return reject(error)
+    } catch (e) {
+      reject(e)
+    }
+  }))
+}
+
+export const isSecurityThresholdReached = (dataBox: Box) => {
+  return new Promise<boolean>(async (resolve, reject) => {
+    try {
+      const boxState: State = await dataBox.boxState()
+      await isMemorySafetyThresholdReached(boxState)
+      await isBalanceSafetyThresholdReached(boxState)
+      return resolve(false)
+    } catch (e) {
+      reject(e)
+    }
+  })
 }
