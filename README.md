@@ -1,6 +1,6 @@
-## MetaBox js sdk
+## II js sdk
 
-MetaBox 多链版本SDK
+II 多链版本SDK
 
 ## Get Start
 
@@ -11,7 +11,7 @@ MetaBox 多链版本SDK
 ### Usage
 
 ```js
-import {MetaBox, Box} from "js-metabox";
+import {II, Box} from "js-metabox";
 import {HttpAgent} from "@dfinity/agent";
 
 (async () => {
@@ -26,7 +26,7 @@ import {HttpAgent} from "@dfinity/agent";
   /**
    * 创建MetaBox实例
    */
-  const MBApi = new MetaBox(agent)
+  const MBApi = new II(agent)
   /**
    *   在MetaBox中的account ID
    *   如果你想用 ICP 创建 Box 的话需要向这个地址打入足够的ICP
