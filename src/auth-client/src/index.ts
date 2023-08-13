@@ -25,6 +25,8 @@ import {
 } from './storage';
 //@ts-ignore
 import {II} from "../../II";
+import {Buffer} from "buffer";
+
 
 export {IdbStorage, LocalStorage} from './storage';
 
@@ -405,9 +407,9 @@ export class AuthClient {
       });
       await a()
     } catch (e) {
-      console.log(e)
       await this.logout()
       options?.onError?.()
+      throw e
     }
 
   }
